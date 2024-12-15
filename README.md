@@ -1,18 +1,18 @@
 # Matchmaking Status (Backend)
 ## Description
-Matchmaking Status is a project that tracks Trackmania matchmaking activity in-real time. It is connected to the Trackmania API and get matches data. With this data, statistics, are computed.
+Matchmaking Status is a project that tracks Trackmania matchmaking activity in-real time. It is connected to the Trackmania API and get matches data. With this data, statistics are computed.
 
 You can find this project in production on : https://matchmaking.racacax.fr/
 
 ## Requirements
-This projects has a Docker image with all dependencies installed :
+This project has a Docker image with all dependencies installed :
 
 - Python 3.10 and its requirements
 - Node 18 (for nodemon)
 
 Docker Compose is also present with a MySQL docker image attached. It is optional if you want to use an external MySQL database. If your database is on localhost, you will have to use `host.docker.internal` as a host. Otherwise, default credentials will be used.
 
-Librairies used:
+Libraries used:
 - Peewee ORM
 - peewee_migrations to manage Peewee ORM migrations
 - pymysql to connect to MySQL database
@@ -38,16 +38,16 @@ ENABLE_THREADS=True
 #### nd_tk.txt and tk.txt files
 To configure in-game API, you need to get refresh token. Follow this tutorial to get it https://webservices.openplanet.dev/auth .
 
-Once done, you'll need to put it in the `nd_tk.txt` file. This file will be updated by the app because it keeps changing. If the app didn't run for a while, you might it to change it later.
+Once done, you'll need to put it in the `nd_tk.txt` file. This file will be updated by the app regularly (on startup + twice a day) because it keeps changing. If the app didn't run for a while, you might need to change it later.
 
 Create also a file named `tk.txt`. It will be used for the public API. This one will get updated as well, depending on `CLIENT_ID` and `CLIENT_SECRET`.
-However you need to put a refresh token in the first place (see: https://doc.trackmania.com/web/web-services/auth/ )
+However, you need to put a refresh token in the first place (see: https://doc.trackmania.com/web/web-services/auth/ )
 ### Build image
 Run `docker-compose build` to build the mmstatus image.
 ### Run container
 If you want to use integrated database, use `make up` command. If you want to use an external database, use `make up_web` command to only start app container.
 ### Database creation (Docker only)
-If you use an external server and database is not created, you can run `make init`. It'll create the database with InnoDB and correct collation.
+If you use Docker internal db image, you can run `make init`. It'll create the database with InnoDB and correct collation.
 
 Note : If you have an error "No such container", see section "Docker image name".
 ### Create tables, insert data and run migrations
@@ -79,3 +79,6 @@ Multiple commands have been added to manage migrations (see Peewee ORM documenta
 ### Custom migrations
 custom_migrations folder contains multiple scripts that have been used at some point to do some operations. 
 They might be useful in some cases, even though they are not supposed to be used for a simple usage.
+### Computed data
+Computed data are stored in the cache folder as TXT/JSON files. Those files mostly have JSON content.
+Most files start with function names and end with season id. However, some stats are computed in subfolders (top 100 by country for instance).

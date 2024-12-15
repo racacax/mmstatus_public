@@ -4,8 +4,8 @@
     "description": "",
     "main": "index.js",
     "scripts": {
-        "start": "nodemon --exec ./start_main.sh -e py,json,env",
-        "devStart": "nodemon --legacy-watch --exec ./start_main.sh -e py,json,env"
+        "start": "nodemon --exec ./start_main.sh -e py,env",
+        "devStart": "nodemon --legacy-watch --exec ./start_main.sh -e py,env"
     },
     "author": "racacax",
     "license": "ISC",

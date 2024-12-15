@@ -233,11 +233,9 @@ class RouteDescriber:
 
 
 def calculate_points(rank, max_points=10000, min_points=1000, total_players=5000):
-    # Utilisation de la fonction logarithmique pour diminuer les points progressivement
     scale_factor = (max_points - min_points) / (
         math.log(2) - math.log(total_players + 1)
     )
     points = int(max_points - scale_factor * (math.log(rank + 1) - math.log(2)))
 
-    # Si les points descendent en dessous du minimum, on attribue la valeur min_points
     return max(min_points, points)
