@@ -1,4 +1,6 @@
 -- Contains all zones present in Nadeo API. Zones are linked to their respective countries.
+START TRANSACTION;
+SET FOREIGN_KEY_CHECKS = 0;
 INSERT INTO `zone` (`id`, `uuid`, `name`, `parent_id`, `country_alpha3`, `file_name`) VALUES
 (1, '30200df47e1311e88060e284abfd2bc4', 'Aachen', 407, NULL, 'Aachen.png'),
 (2, '302287cc7e1311e88060e284abfd2bc4', 'Aargau', 557, NULL, 'Aargau.png'),
@@ -1200,3 +1202,5 @@ INSERT INTO `zone` (`id`, `uuid`, `name`, `parent_id`, `country_alpha3`, `file_n
 (1197, '7ce79cafd90c40219a093d62c0fa6d8b', '山形県', 264, NULL, 'Yamagata.png'),
 (1198, '5d1645966c604dcb92c2f93b918eee26', '山口県', 264, NULL, 'Yamaguchi.png'),
 (1199, 'a96a1800c7224f17bc67ba38592e0943', '山梨県', 264, NULL, 'Yamanashi.png');
+COMMIT;
+SET FOREIGN_KEY_CHECKS = 1;
