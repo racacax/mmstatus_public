@@ -14,8 +14,28 @@ conn = pymysql.connect(
     password=DATABASE_PASSWORD,
     database=DATABASE_NAME,
 )
+
+
+def parse_sql(data):
+    stmt = ""
+    stmts = []
+    for line in data:
+        if line:
+            if line.startswith("--"):
+                continue
+            stmt += line.strip() + " "
+            if ";" in stmt:
+                stmts.append(stmt.strip())
+                stmt = ""
+    return stmts
+
+
 with open(f"sql_scripts/{sys.argv[1]}.sql") as f:
     print("Running script...")
-    conn.cursor().execute(f.read())
+    with conn.cursor() as cursor:
+        queries = parse_sql(f.read().splitlines())
+        for query in queries:
+            print(query)
+            cursor.execute(query)
     conn.close()
     print("Script ran successfully")

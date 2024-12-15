@@ -46,10 +46,10 @@ However you need to put a refresh token in the first place (see: https://doc.tra
 Run `docker-compose build` to build the mmstatus image.
 ### Run container
 If you want to use integrated database, use `make up` command. If you want to use an external database, use `make up_web` command to only start app container.
-
-Note: Some errors will appear as database is not configured.
 ### Database creation (Docker only)
 If you use an external server and database is not created, you can run `make init`. It'll create the database with InnoDB and correct collation.
+
+Note : If you have an error "No such container", see section "Docker image name".
 ### Create tables, insert data and run migrations
 At this stage, database is empty. To create models, you will have to run these commands
 ```shell
