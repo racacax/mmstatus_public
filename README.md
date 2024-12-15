@@ -36,7 +36,7 @@ ENABLE_OAUTH=True
 ENABLE_THREADS=True
 ```
 #### nd_tk.txt and tk.txt files
-To configure in-game API, you need to get refresh token. Follow this tutorial to get it.
+To configure in-game API, you need to get refresh token. Follow this tutorial to get it https://webservices.openplanet.dev/auth .
 
 Once done, you'll need to put it in the `nd_tk.txt` file. This file will be updated by the app because it keeps changing. If the app didn't run for a while, you might it to change it later.
 
@@ -70,6 +70,8 @@ GG it's done.
 Depending on your Docker version, separator might be - or _. If it is -, you will need to add `SEPARATOR="-"` after any `make` command.
 
 Example : `make run_sql SEPARATOR="-" SQL_SCRIPT="init_tables"`
+
+You can also replace default SEPARATOR in Makefile directly.
 
 ### Makefile
 Multiple commands have been added to manage migrations (see Peewee ORM documentation) and also run bash.
