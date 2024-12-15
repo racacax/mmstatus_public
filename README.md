@@ -48,8 +48,6 @@ Run `docker-compose build` to build the mmstatus image.
 If you want to use integrated database, use `make up` command. If you want to use an external database, use `make up_web` command to only start app container.
 ### Database creation (Docker only)
 If you use Docker internal db image, you can run `make init`. It'll create the database with InnoDB and correct collation.
-
-Note : If you have an error "No such container", see section "Docker image name".
 ### Create tables, insert data and run migrations
 At this stage, database is empty. To create models, you will have to run these commands
 ```shell
@@ -66,13 +64,6 @@ Change .env variables to enable threads and oauth (if you want), stop container 
 GG it's done.
 
 ## Usage and info
-### Docker image name
-Depending on your Docker version, separator might be - or _. If it is -, you will need to add `SEPARATOR="-"` after any `make` command.
-
-Example : `make run_sql SEPARATOR="-" SQL_SCRIPT="init_tables"`
-
-You can also replace default SEPARATOR in Makefile directly.
-
 ### Makefile
 Multiple commands have been added to manage migrations (see Peewee ORM documentation) and also run bash.
 #### Updating image
