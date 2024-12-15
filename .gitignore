@@ -1,0 +1,9 @@
+venv
+.env
+yarn.lock
+node_modules
+ml5bot.db
+windows
+tk.txt
+nd_tk.txt
+cache
