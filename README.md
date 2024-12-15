@@ -48,8 +48,6 @@ Run `docker-compose build` to build the mmstatus image.
 If you want to use integrated database, use `make up` command. If you want to use an external database, use `make up_web` command to only start app container.
 ### Database creation (Docker only)
 If you use Docker internal db image, you can run `make init`. It'll create the database with InnoDB and correct collation.
-
-Note : If you have an error "No such container", see section "Docker image name".
 ### Create tables, insert data and run migrations
 At this stage, database is empty. To create models, you will have to run these commands
 ```shell
@@ -66,19 +64,17 @@ Change .env variables to enable threads and oauth (if you want), stop container 
 GG it's done.
 
 ## Usage and info
-### Docker image name
-Depending on your Docker version, separator might be - or _. If it is -, you will need to add `SEPARATOR="-"` after any `make` command.
-
-Example : `make run_sql SEPARATOR="-" SQL_SCRIPT="init_tables"`
-
-You can also replace default SEPARATOR in Makefile directly.
-
 ### Makefile
 Multiple commands have been added to manage migrations (see Peewee ORM documentation) and also run bash.
-
+#### Updating image
+When requirements change, just run `make update`
 ### Custom migrations
 custom_migrations folder contains multiple scripts that have been used at some point to do some operations. 
 They might be useful in some cases, even though they are not supposed to be used for a simple usage.
 ### Computed data
 Computed data are stored in the cache folder as TXT/JSON files. Those files mostly have JSON content.
 Most files start with function names and end with season id. However, some stats are computed in subfolders (top 100 by country for instance).
+### Tests
+Tests are present in the tests folder. Run `make test` or `make testt` (with TTY) to trigger the tests.
+
+Note: pytest will create a database named mmstatus_test. If you don't use docker internal db image, user needs to have database creation permission.
