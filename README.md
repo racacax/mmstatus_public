@@ -75,10 +75,15 @@ You can also replace default SEPARATOR in Makefile directly.
 
 ### Makefile
 Multiple commands have been added to manage migrations (see Peewee ORM documentation) and also run bash.
-
+#### Updating image
+When requirements change, just run `make update`
 ### Custom migrations
 custom_migrations folder contains multiple scripts that have been used at some point to do some operations. 
 They might be useful in some cases, even though they are not supposed to be used for a simple usage.
 ### Computed data
 Computed data are stored in the cache folder as TXT/JSON files. Those files mostly have JSON content.
 Most files start with function names and end with season id. However, some stats are computed in subfolders (top 100 by country for instance).
+### Tests
+Tests are present in the tests folder. Run `make test` or `make testt` (with TTY) to trigger the tests.
+
+Note: pytest will create a database named mmstatus_test. If you don't use docker internal db image, user needs to have database creation permission.

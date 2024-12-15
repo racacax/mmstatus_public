@@ -1,0 +1,24 @@
+name: Test on pull request
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches:
+      - master
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: KengoTODA/actions-setup-docker-compose@v1
+        with:
+          version: '2.14.2'
+      - name: Install dependencies
+        run: docker-compose build
+      - name: Create files
+        run: touch tk.txt && touch nd_tk.txt && cp .env.test .env && chmod a+x *.sh
+      - name: Launch docker container
+        run: docker-compose up -d
+      - name: Run test suite
+        run: sleep 10 && make test
