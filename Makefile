@@ -29,3 +29,7 @@ testt:
 	${DOCKER_EXE_TTY} mmstatus_web pytest --verbose
 test:
 	${DOCKER_EXE} mmstatus_web pytest --verbose
+show_logs:
+	${DOCKER_EXE} mmstatus_web tail -f logs/${FILE}.log | grep "${PATTERN}"
+show_all_logs:
+	FILE="*" PATTERN="${PATTERN}" make show_logs

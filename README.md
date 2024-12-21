@@ -78,3 +78,11 @@ Most files start with function names and end with season id. However, some stats
 Tests are present in the tests folder. Run `make test` or `make testt` (with TTY) to trigger the tests.
 
 Note: pytest will create a database named mmstatus_test. If you don't use docker internal db image, user needs to have database creation permission.
+### Logs
+Logs are stored in the logs folder. A new file is created each day and logs are kept for 5 days.
+Each log line is a JSON. You can use tools like Log.io to monitor them in real time.
+You can also see them via command line with `make show_all_logs` command.
+
+You can also use `FILE="Your file" make show_logs` (e.g `FILE="get_matches" make show_logs`) to see logs for a special function only
+
+You can also filter logs by adding a grep pattern (for both show_logs and show_all_logs). E.g. : `PATTERN="WARNING" FILE="get_matches" make show_logs`

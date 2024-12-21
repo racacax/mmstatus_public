@@ -21,6 +21,7 @@ DATABASE_USER = os.getenv("DATABASE_USER", "root")
 DATABASE_PASSWORD = os.getenv("DATABASE_PASSWORD", "doweneedpasswordindocker")
 DATABASE_HOST = os.getenv("DATABASE_HOST", "db")
 DATABASE_PORT = int(os.getenv("DATABASE_PORT", 3306))
+SHOW_LOGS = os.getenv("SHOW_LOGS", "False") == "True"
 if os.environ.get("ENVIRONMENT") == "test":
     DATABASE_NAME = "mmstatus_test"
 

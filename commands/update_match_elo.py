@@ -1,12 +1,17 @@
 import time
+import traceback
 from datetime import datetime
 
 from models import Game, Player, PlayerGame
+from src.log_utils import create_logger
+
+logger = create_logger("update_match_elo")
 
 
 def update_match_elo():
     while True:
         try:
+            logger.info("Fetching matches with uncomputed average elo")
             games = (
                 Game.select(Game)
                 .join(PlayerGame)
@@ -17,8 +22,11 @@ def update_match_elo():
                 )
                 .group_by(Game)
             )
+            logger.info(f"Found {len(games)} with uncomputed elo")
             for game in games:
-                print("updating elo for game ", game)
+                logger.info(
+                    f"Updating elo for match id {game.id}", extra={"game": game}
+                )
                 try:
                     min_elo = 999999999
                     max_elo = 0
@@ -35,7 +43,14 @@ def update_match_elo():
                     game.average_elo = sum_elo / len(game.player_games)
                     game.save()
                 except Exception as e:
-                    print("update_match_elo error", game, e)
+                    logger.error(
+                        f"Error while updating match with id {game.id}",
+                        extra={"exception": e, "traceback": traceback.format_exc()},
+                    )
         except Exception as e2:
-            print("update_match_elo error", e2)
+            logger.error(
+                f"General error in the thread",
+                extra={"exception": e2, "traceback": traceback.format_exc()},
+            )
+        logger.info("Waiting 5s before starting the thread again...")
         time.sleep(5)
