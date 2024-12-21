@@ -1,13 +1,18 @@
 import time
+import traceback
 from datetime import datetime, timedelta
 
 from models import Player, PlayerGame, Season, PlayerSeason
+from src.log_utils import create_logger
 from src.services import NadeoLive
+
+logger = create_logger("update_player_ranks")
 
 
 def update_player_ranks():
     while True:
         try:
+            logger.info("Getting players with outdated points")
             season = Season.get_current_season()
             players = (
                 Player.select(Player)
@@ -22,12 +27,15 @@ def update_player_ranks():
                 .paginate(1, 100)
             )
             count = len(players)
+            logger.info(f"Found {count} players")
             if count == 0:
+                time.sleep(10)
                 continue
             try:
                 ids = [str(p.uuid) for p in players]
-                print("Updating player ranks", ids)
+                logger.info(f"Updating players", extra={"ids": ids})
                 ranks = NadeoLive.get_player_ranks(ids)
+                logger.info(f"get_player_ranks response", extra={"response": ranks})
                 scores = {p["player"]: p["score"] for p in ranks["results"]}
                 ranks = {p["player"]: p["rank"] for p in ranks["results"]}
                 for p in players:
@@ -48,9 +56,26 @@ def update_player_ranks():
                                 pg.rank_after_match = p.rank
                                 pg.save()
                     except Exception as e:
-                        print("update player ranks error", p, e)
+                        logger.error(
+                            f"Error while updating player rank",
+                            extra={
+                                "exception": e,
+                                "traceback": traceback.format_exc(),
+                                "player": p,
+                            },
+                        )
             except Exception as e:
-                print("update player ranks error", players, e)
+                logger.error(
+                    f"Error while updating players ranks",
+                    extra={
+                        "exception": e,
+                        "traceback": traceback.format_exc(),
+                    },
+                )
         except Exception as e2:
-            print("update player ranks error", e2)
+            logger.error(
+                f"General error in the thread",
+                extra={"exception": e2, "traceback": traceback.format_exc()},
+            )
+        logger.info("Waiting 10s before starting thread again...")
         time.sleep(10)

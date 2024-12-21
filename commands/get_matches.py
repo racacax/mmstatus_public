@@ -1,29 +1,44 @@
 import time
+import traceback
 from datetime import datetime
 
 import settings
 from models import PlayerGame, Game, Map, Player
+from src.log_utils import create_logger
 from src.services import NadeoLive
+
+
+logger = create_logger("get_matches")
 
 
 def get_matches():
     last_game = Game.select().order_by(Game.id.desc()).paginate(1, 1).get_or_none()
-    print("get_matches last game", last_game)
+    logger.info(f"Starting get_matches thread. Last match: {last_game}")
     id = (last_game and last_game.id or settings.START_ID) + 1
     id = max(id, settings.START_ID)
-
     while True:
         while True:
             try:
                 with settings.db.atomic():
-                    print("Adding " + str(id))
+                    logger.info(f"Adding new match with id {id}")
                     match = NadeoLive.get_match(id)
                     if "exception" in match:
-                        print("error")
+                        logger.warning(
+                            f"Exception while getting match id {id}. Most likely reached last match id.",
+                            extra={"response": match},
+                        )
                         break
+                    logger.info(
+                        f"Get match response for id {id}", extra={"response": match}
+                    )
                     name: str = match["name"]
                     if "Official 3v3" in name:
+                        logger.info(f"{name} is a valid match. Getting participants...")
                         participants = NadeoLive.get_match_participants(id)
+                        logger.info(
+                            f"Get participants response for match {id}",
+                            extra={"response": participants},
+                        )
                         players_o = []
                         map, _ = Map.get_or_create(uid=match["publicConfig"]["maps"][0])
                         f_trackmaster = (
@@ -36,6 +51,7 @@ def get_matches():
                             tm_limit = f_trackmaster[0].points
                         else:
                             tm_limit = 99999
+                        logger.info(f"Creating match with id {match['id']}")
                         g = Game.create(
                             id=match["id"],
                             time=datetime.fromtimestamp(match["startDate"]),
@@ -44,6 +60,9 @@ def get_matches():
                             trackmaster_limit=tm_limit,
                         )
                         for p in participants:
+                            logger.info(
+                                f"Getting/creating player with id {p['participant']}"
+                            )
                             player, created = Player.get_or_create(
                                 uuid=p["participant"]
                             )
@@ -55,10 +74,21 @@ def get_matches():
 
                         for p in players_o:
                             PlayerGame.create(game=g, player=p)
+                    else:
+                        logger.info(
+                            f"Got match name {name} which is not a valid Matchmaking name. Skipping..."
+                        )
             except Exception as e:
-                print("get_matches error", id, e)
+                logger.error(
+                    f"Exception while creating match with id {id}",
+                    extra={"error": e, "traceback": traceback.format_exc()},
+                )
                 if "lock" in str(e).lower():
-                    print("we'll restart if it's only a deadlock")
+                    logger.warning(
+                        f"Previous error for match id {id} was a deadlock. We'll restart the transaction"
+                    )
+                    time.sleep(1)
                     continue
             id += 1
+        logger.info(f"Waiting 30s before fetching new matches")
         time.sleep(30)

@@ -1,13 +1,17 @@
 #!/usr/bin/env python3
 import logging
 import threading
+import traceback
 import urllib
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from inspect import signature
 from socketserver import ThreadingMixIn
 
+from src.log_utils import create_logger
 from src.routes import routes
 from src.utils import send_error, send_response
+
+logger = create_logger("api")
 
 
 class APIHandler:
@@ -52,7 +56,9 @@ class APIHandler:
                     return
                 send_response(server, *func(**parameters))
             except BaseException as e:
-                logging.exception(e)
+                logger.exception(
+                    "Exception", extra={"error": e, "traceback": traceback.format_exc()}
+                )
                 send_error(server, 500, f"An unexpected error occured : {e}")
         else:
             send_error(server, 404, f"Endpoint '{endpoint}' doesn't exist")

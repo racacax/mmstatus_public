@@ -1,12 +1,16 @@
 import json
 import os
 import time
+import traceback
 from datetime import datetime, time as time2, timedelta
 
 from peewee import fn, Case, JOIN
 
 from models import Player, PlayerGame, Game, Season, Zone, PlayerSeason, Map
+from src.log_utils import create_logger
 from src.utils import CustomJSONEncoder, RANKS, calculate_points
+
+logger = create_logger("update_big_queries")
 
 
 def get_countries_leaderboard(season_id):
@@ -492,16 +496,21 @@ def update_big_queries():
         ]
         for q in queries:
             name = q.__name__
-            print("update_big_queries", name)
+            logger.info(f"Starting query {name}")
             try:
                 results = q(season.start_time, season.end_time)
                 f = open(path + name + "_" + str(season.id) + ".txt", "w")
                 f.write(results)
                 f.close()
             except Exception as e:
-                print("update_big_queries error", e)
+                logger.error(
+                    f"Error for query {name}",
+                    extra={"exception": e, "trackeback": traceback.format_exc()},
+                )
+            logger.info("Waiting 60s before running new query...")
             time.sleep(
                 60
             )  # since some of these query are locking the whole database, we add gaps between queries to allow other
             # normal threads to work again
+        logger.info("Waiting 1h before updating data...")
         time.sleep(3600)
