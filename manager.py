@@ -1,25 +1,25 @@
 import threading
 import time
 
-from commands.get_matches import get_matches
-from commands.update_big_queries import (
+from threads.get_matches import GetMatchesThread
+from threads.update_big_queries import (
     update_big_queries,
 )
-from commands.update_maps import update_maps
-from commands.update_match_elo import update_match_elo
-from commands.update_matches import update_matches
-from commands.update_player_countries import update_player_countries
-from commands.update_player_positions import update_player_positions
-from commands.update_player_ranks import update_player_ranks
-from commands.update_player_zones import update_player_zones
-from commands.update_players import update_players
+from threads.update_maps import update_maps
+from threads.update_match_elo import update_match_elo
+from threads.update_matches import update_matches
+from threads.update_player_countries import update_player_countries
+from threads.update_player_positions import update_player_positions
+from threads.update_player_ranks import update_player_ranks
+from threads.update_player_zones import update_player_zones
+from threads.update_players import update_players
 
 from settings import ENABLE_OAUTH, ENABLE_THREADS
 from src.services import NadeoCore
 
 if ENABLE_THREADS:
     threading.Thread(target=update_big_queries, args=[]).start()
-    threading.Thread(target=get_matches, args=[]).start()
+    threading.Thread(target=GetMatchesThread().handle, args=[]).start()
     threading.Thread(target=update_maps, args=[]).start()
     threading.Thread(target=update_player_zones, args=[]).start()
     threading.Thread(target=update_player_countries, args=[]).start()
