@@ -21,6 +21,8 @@ jobs:
       - name: Launch docker container
         run: docker-compose up -d
       - name: Run black
-        run: docker exec -i mmstatus_web python -m black . --verbose
+        run: sleep 10 && docker exec -i mmstatus_web python -m black . --verbose
+      - name: Run flake8
+        run: docker exec -i mmstatus_web python -m flake8 . --verbose
       - name: Run test suite
-        run: sleep 10 && make test
+        run: make test
