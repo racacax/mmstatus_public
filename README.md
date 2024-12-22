@@ -43,7 +43,7 @@ Once done, you'll need to put it in the `nd_tk.txt` file. This file will be upda
 Create also a file named `tk.txt`. It will be used for the public API. This one will get updated as well, depending on `CLIENT_ID` and `CLIENT_SECRET`.
 However, you need to put a refresh token in the first place (see: https://doc.trackmania.com/web/web-services/auth/ )
 ### Build image
-Run `docker-compose build` to build the mmstatus image.
+Run `make update` to build the mmstatus image.
 ### Run container
 If you want to use integrated database, use `make up` command. If you want to use an external database, use `make up_web` command to only start app container.
 ### Database creation (Docker only)

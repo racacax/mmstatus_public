@@ -1,6 +1,6 @@
 DOCKER_EXE		= docker exec -i
 DOCKER_EXE_TTY	= docker exec -it
-DCO_EXE			= docker-compose
+DCO_EXE			= docker compose
 SEPARATOR       = _
 PYTHON			= ${DOCKER_EXE_TTY} mmstatus_web python
 

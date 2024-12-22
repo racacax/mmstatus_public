@@ -15,7 +15,7 @@ ENV TZ=Europe/Paris
 RUN apt update
 # Javascript dependencies layer
 ENV NVM_DIR="/root/.nvm"
-ENV NODE_VERSION 18.12.1
+ENV NODE_VERSION 22.11.0
 RUN ["mkdir", "/install"]
 RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | bash && . $NVM_DIR/nvm.sh \
     && nvm install $NODE_VERSION --latest-npm && npm install -g yarn
