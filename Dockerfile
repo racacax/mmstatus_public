@@ -21,6 +21,7 @@ RUN curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.39.2/install.sh | b
     && nvm install $NODE_VERSION --latest-npm && npm install -g yarn
 ENV NODE_PATH $NVM_DIR/v$NODE_VERSION/lib/node_modules
 ENV PATH      $NVM_DIR/v$NODE_VERSION/bin:$PATH
+ENV PYTHONPATH="$PYTHONPATH:/app"
 
 # Python dependencies layer
 COPY requirements.txt requirements.txt /app/

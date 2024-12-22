@@ -20,18 +20,16 @@ def update_player_zones():
                     time.sleep(10)
                     continue
                 ids = [str(p.uuid) for p in players]
-                logger.info(f"Updating zones for players", extra={"ids": ids})
+                logger.info("Updating zones for players", extra={"ids": ids})
                 player_zones = NadeoCore.get_player_zones(ids)
-                logger.info(
-                    f"get_player_zones response", extra={"response": player_zones}
-                )
+                logger.info("get_player_zones response", extra={"response": player_zones})
                 player_zones = {p["accountId"]: p["zoneId"] for p in player_zones}
                 for p in players:
                     p.zone = Zone.get_or_none(uuid=player_zones.get(str(p.uuid), None))
                     p.save()
             except Exception as e:
                 logger.error(
-                    f"Error while updating players zones",
+                    "Error while updating players zones",
                     extra={
                         "exception": e,
                         "traceback": traceback.format_exc(),
@@ -39,7 +37,7 @@ def update_player_zones():
                 )
         except Exception as e2:
             logger.error(
-                f"General error in the thread",
+                "General error in the thread",
                 extra={"exception": e2, "traceback": traceback.format_exc()},
             )
         logger.info("Waiting 10s before starting thread again")

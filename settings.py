@@ -1,7 +1,6 @@
 import os
 
 import peewee
-from peewee import *
 from dotenv import load_dotenv
 from playhouse.shortcuts import ReconnectMixin
 
@@ -26,7 +25,7 @@ if os.environ.get("ENVIRONMENT") == "test":
     DATABASE_NAME = "mmstatus_test"
 
 
-class ReconnectMySQLDatabase(ReconnectMixin, MySQLDatabase):
+class ReconnectMySQLDatabase(ReconnectMixin, peewee.MySQLDatabase):
     def reconnect_if_lost(self):
         try:
             self.execute_sql("SELECT 1")

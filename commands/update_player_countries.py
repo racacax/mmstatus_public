@@ -11,11 +11,7 @@ def update_player_countries():
     while True:
         try:
             logger.info("Fetching first 50 players without country info")
-            players = (
-                Player.select(Player)
-                .where(Player.zone != None, Player.country == None)
-                .paginate(1, 50)
-            )
+            players = Player.select(Player).where(Player.zone != None, Player.country == None).paginate(1, 50)
             logger.info(f"Found {len(players)} players")
             try:
                 if len(players) == 0:
@@ -32,12 +28,12 @@ def update_player_countries():
                     p.save()
             except Exception as e:
                 logger.error(
-                    f"Error while updating players info",
+                    "Error while updating players info",
                     extra={"exception": e, "traceback": traceback.format_exc()},
                 )
         except Exception as e2:
             logger.error(
-                f"General error in the thread",
+                "General error in the thread",
                 extra={"exception": e2, "traceback": traceback.format_exc()},
             )
         logger.info("Waiting 10s before updating data...")

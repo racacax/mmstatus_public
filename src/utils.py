@@ -157,9 +157,7 @@ def send_error(server: BaseHTTPRequestHandler, code: int, message: str):
     send_response(server, code, {"code": code, "message": message})
 
 
-def send_response(
-    server: BaseHTTPRequestHandler, code: int, content: Union[list, dict]
-):
+def send_response(server: BaseHTTPRequestHandler, code: int, content: Union[list, dict]):
     encoded_response = json.dumps(content, cls=CustomJSONEncoder).encode()
     server.send_response(code)
     server.send_header("Content-Type", "application/json")
@@ -233,9 +231,7 @@ class RouteDescriber:
 
 
 def calculate_points(rank, max_points=10000, min_points=1000, total_players=5000):
-    scale_factor = (max_points - min_points) / (
-        math.log(2) - math.log(total_players + 1)
-    )
+    scale_factor = (max_points - min_points) / (math.log(2) - math.log(total_players + 1))
     points = int(max_points - scale_factor * (math.log(rank + 1) - math.log(2)))
 
     return max(min_points, points)

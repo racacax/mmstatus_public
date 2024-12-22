@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-import logging
 import threading
 import traceback
 import urllib
@@ -50,15 +49,11 @@ class APIHandler:
                             current_value = parameter.default
                         parameters[key] = current_value
                 except BaseException as pe:
-                    send_error(
-                        server, 400, f"One query parameter is wrongly formatted : {pe}"
-                    )
+                    send_error(server, 400, f"One query parameter is wrongly formatted : {pe}")
                     return
                 send_response(server, *func(**parameters))
             except BaseException as e:
-                logger.exception(
-                    "Exception", extra={"error": e, "traceback": traceback.format_exc()}
-                )
+                logger.exception("Exception", extra={"error": e, "traceback": traceback.format_exc()})
                 send_error(server, 500, f"An unexpected error occured : {e}")
         else:
             send_error(server, 404, f"Endpoint '{endpoint}' doesn't exist")

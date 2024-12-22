@@ -27,7 +27,7 @@ def update_player_positions():
             logger.info(f"update_player_positions done in {(datetime.now() - now)}")
         except Exception as e:
             logger.error(
-                f"Error while updating player positions",
+                "Error while updating player positions",
                 extra={"exception": e, "traceback": traceback.format_exc()},
             )
         logger.info("Waiting 60s before recomputing positions again...")

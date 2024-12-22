@@ -23,9 +23,7 @@ def create_logger(name: str):
         sh.setFormatter(cf)
         logger.addHandler(sh)
 
-    fh = TimedRotatingFileHandler(
-        f"logs/{name}.log", when="d", interval=1, backupCount=5
-    )
+    fh = TimedRotatingFileHandler(f"logs/{name}.log", when="d", interval=1, backupCount=5)
     fh.setLevel(logging.INFO)
     fh.setFormatter(cf)
     logger.addHandler(fh)

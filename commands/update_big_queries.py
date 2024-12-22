@@ -119,9 +119,7 @@ def get_maps_statistics(min_date, max_date):
         .order_by(count.desc())
         .dicts()
     )
-    return json.dumps(
-        {"last_updated": datetime.now().timestamp(), "results": [q for q in query]}
-    )
+    return json.dumps({"last_updated": datetime.now().timestamp(), "results": [q for q in query]})
 
 
 def get_players_statistics(o_by, min_date, max_date):
@@ -193,9 +191,7 @@ def get_activity_per_hour(min_elo, min_date, max_date):
                 None,
                 [
                     (
-                        fn.TIME(Game.time).between(
-                            time2(min_hour), time2(min_hour, 59, 59)
-                        ),
+                        fn.TIME(Game.time).between(time2(min_hour), time2(min_hour, 59, 59)),
                         1,
                     )
                 ],
@@ -288,9 +284,7 @@ def get_activity_hours_countries(min_elo, min_date, max_date):
                 None,
                 [
                     (
-                        fn.TIME(Game.time).between(
-                            time2(min_hour), time2(min_hour, 59, 59)
-                        ),
+                        fn.TIME(Game.time).between(time2(min_hour), time2(min_hour, 59, 59)),
                         1,
                     )
                 ],
@@ -300,9 +294,7 @@ def get_activity_hours_countries(min_elo, min_date, max_date):
 
     conditions = [(get_condition(i)) for i in range(24)]
     games = (
-        PlayerGame.select(
-            Zone.id, Zone.name, Zone.file_name, Zone.country_alpha3, *conditions
-        )
+        PlayerGame.select(Zone.id, Zone.name, Zone.file_name, Zone.country_alpha3, *conditions)
         .join(Player)
         .join(Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country")
         .switch(PlayerGame)
@@ -374,9 +366,7 @@ def get_top_100_per_country_func(path, season):
             os.makedirs(season_path)
         for country in countries:
             players = (
-                PlayerSeason.select(
-                    Player.name, Player.uuid, PlayerSeason.rank, PlayerSeason.points
-                )
+                PlayerSeason.select(Player.name, Player.uuid, PlayerSeason.rank, PlayerSeason.points)
                 .join(Season)
                 .switch(PlayerSeason)
                 .join(Player)
@@ -387,9 +377,7 @@ def get_top_100_per_country_func(path, season):
                 .dicts()
             )
             if len(players) > 0:
-                countries_gathered.append(
-                    {"country_alpha3": country.country_alpha3, "name": country.name}
-                )
+                countries_gathered.append({"country_alpha3": country.country_alpha3, "name": country.name})
                 f = open(season_path + country.country_alpha3 + ".txt", "w")
                 f.write(
                     json.dumps(
@@ -439,11 +427,7 @@ def get_activity_per_rank_distribution(min_date, _):
             max_elo = RANKS[i - 1]["min_elo"]
         else:
             max_elo = 99999999
-        conditions.append(
-            get_condition(
-                RANKS[i]["key"], RANKS[i]["min_elo"], max_elo, RANKS[i]["min_rank"]
-            )
-        )
+        conditions.append(get_condition(RANKS[i]["key"], RANKS[i]["min_elo"], max_elo, RANKS[i]["min_rank"]))
     players = (
         Player.select(*conditions)
         .join(Game)
@@ -454,17 +438,12 @@ def get_activity_per_rank_distribution(min_date, _):
     )
     season = Season.get_current_season()
     try:
-        f = open(
-            "cache/get_activity_per_rank_distribution_" + str(season.id) + ".txt", "r"
-        )
+        f = open("cache/get_activity_per_rank_distribution_" + str(season.id) + ".txt", "r")
         j = json.loads(f.read())
         f.close()
     except FileNotFoundError:
         j = {"results": [], "last_updated": 0}
-    if (
-        len(j) == 0
-        or j["last_updated"] < (datetime.now() - timedelta(hours=12)).timestamp()
-    ):
+    if len(j) == 0 or j["last_updated"] < (datetime.now() - timedelta(hours=12)).timestamp():
         d = players[0]
         d["date"] = datetime.now().timestamp()
         j["last_updated"] = d["date"]

@@ -28,9 +28,7 @@ def get_matches():
                             extra={"response": match},
                         )
                         break
-                    logger.info(
-                        f"Get match response for id {id}", extra={"response": match}
-                    )
+                    logger.info(f"Get match response for id {id}", extra={"response": match})
                     name: str = match["name"]
                     if "Official 3v3" in name:
                         logger.info(f"{name} is a valid match. Getting participants...")
@@ -60,12 +58,8 @@ def get_matches():
                             trackmaster_limit=tm_limit,
                         )
                         for p in participants:
-                            logger.info(
-                                f"Getting/creating player with id {p['participant']}"
-                            )
-                            player, created = Player.get_or_create(
-                                uuid=p["participant"]
-                            )
+                            logger.info(f"Getting/creating player with id {p['participant']}")
+                            player, created = Player.get_or_create(uuid=p["participant"])
                             player.last_match = g
                             players_o.append(player)
                             if created:
@@ -75,20 +69,16 @@ def get_matches():
                         for p in players_o:
                             PlayerGame.create(game=g, player=p)
                     else:
-                        logger.info(
-                            f"Got match name {name} which is not a valid Matchmaking name. Skipping..."
-                        )
+                        logger.info(f"Got match name {name} which is not a valid Matchmaking name. Skipping...")
             except Exception as e:
                 logger.error(
                     f"Exception while creating match with id {id}",
                     extra={"error": e, "traceback": traceback.format_exc()},
                 )
                 if "lock" in str(e).lower():
-                    logger.warning(
-                        f"Previous error for match id {id} was a deadlock. We'll restart the transaction"
-                    )
+                    logger.warning(f"Previous error for match id {id} was a deadlock. We'll restart the transaction")
                     time.sleep(1)
                     continue
             id += 1
-        logger.info(f"Waiting 30s before fetching new matches")
+        logger.info("Waiting 30s before fetching new matches")
         time.sleep(30)

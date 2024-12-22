@@ -30,9 +30,7 @@ def update_matches():
                         with db.atomic():
                             logger.info(f"Get match data for match id {game.id}")
                             match = NadeoLive.get_match(game.id)
-                            logger.info(
-                                f"Match response {game.id}", {"response": match}
-                            )
+                            logger.info(f"Match response {game.id}", {"response": match})
                             if match["status"] == "COMPLETED":
                                 logger.info(f"Match {game.id} is completed")
                                 teams = NadeoLive.get_match_teams(game.id)
@@ -47,48 +45,31 @@ def update_matches():
                                     game.rounds += teams[1]["score"]
                                 game.save()
 
-                                logger.info(
-                                    f"Fetching participants results for match id {game.id}"
-                                )
+                                logger.info(f"Fetching participants results for match id {game.id}")
                                 participants = NadeoLive.get_match_participants(game.id)
                                 logger.info(
                                     f"Participants response for match id {game.id}",
                                     {"response": participants},
                                 )
-                                participants = {
-                                    p["participant"]: p for p in participants
-                                }
+                                participants = {p["participant"]: p for p in participants}
 
                                 teams = {p["position"]: p for p in teams}
                                 for p in game.player_games:
-                                    logger.info(
-                                        f"Match id {game.id}, player {p.player} : Updating info"
-                                    )
+                                    logger.info(f"Match id {game.id}, player {p.player} : Updating info")
                                     player = p.player
-                                    p.is_mvp = participants.get(
-                                        str(player.uuid), {"mvp": None}
-                                    )["mvp"]
+                                    p.is_mvp = participants.get(str(player.uuid), {"mvp": None})["mvp"]
                                     p.is_win = (
                                         teams.get(
-                                            participants.get(
-                                                str(player.uuid), {"teamPosition": 0}
-                                            )["teamPosition"],
+                                            participants.get(str(player.uuid), {"teamPosition": 0})["teamPosition"],
                                             {"rank": 1},
                                         )["rank"]
-                                        == 1
-                                    )
-                                    p.position = participants.get(
-                                        str(player.uuid), {"position": None}
-                                    )["position"]
+                                    ) == 1
+                                    p.position = participants.get(str(player.uuid), {"position": None})["position"]
                                     if p.position is not None:
                                         p.position += 1
-                                    p.points = participants.get(
-                                        str(player.uuid), {"score": None}
-                                    )["score"]
+                                    p.points = participants.get(str(player.uuid), {"score": None})["score"]
                                     p.save()
-                                    player.last_points_update = datetime.fromtimestamp(
-                                        0
-                                    )
+                                    player.last_points_update = datetime.fromtimestamp(0)
                                     player.save()
                         break
                     except Exception as e:
@@ -105,7 +86,7 @@ def update_matches():
                         break
         except Exception as e2:
             logger.error(
-                f"General error in the thread",
+                "General error in the thread",
                 extra={"exception": e2, "traceback": traceback.format_exc()},
             )
         logger.info("Waiting 30s before updating next matches...")

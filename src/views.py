@@ -5,7 +5,7 @@ from uuid import UUID
 
 from peewee import Case, fn, JOIN
 
-from models import Player, PlayerGame, Game, Map, Season, Zone, PlayerSeason
+from models import Player, PlayerGame, Game, Map, Season, Zone
 from src.player_views import PlayerAPIViews
 from src.utils import Option, format_type, POINTS_TYPE, route, RouteDescriber, RANKS
 
@@ -26,9 +26,7 @@ class APIViews(RouteDescriber):
         max_rank: Option(int, description="Maximum of filtered players") = 999999,
         min_rank: Option(int, description="Minimum rank of filtered players") = 1,
         page: int = 1,
-        name: Option(
-            str, description="Search string for player name (case insensitive)"
-        ) = "",
+        name: Option(str, description="Search string for player name (case insensitive)") = "",
         compute_matches_played: Option(
             str,
             description="Indicate if we need to compute stats about matches played by players",
@@ -51,9 +49,7 @@ class APIViews(RouteDescriber):
             )
             .join(Game)
             .switch(Player)
-            .join(
-                Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country"
-            )
+            .join(Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country")
             .order_by(Game.id.desc())
             .where(
                 Player.name.contains(name),
@@ -73,17 +69,11 @@ class APIViews(RouteDescriber):
                 PlayerGame.select(
                     PlayerGame.player_id,
                     fn.COUNT(Game.id).alias("total_last_month"),
-                    fn.SUM(
-                        Case(None, [(Game.time > (now - timedelta(hours=24)), 1)], 0)
-                    ).alias("total_24_hours"),
-                    fn.SUM(
-                        Case(None, [(Game.time > (now - timedelta(days=7)), 1)], 0)
-                    ).alias("total_1_week"),
+                    fn.SUM(Case(None, [(Game.time > (now - timedelta(hours=24)), 1)], 0)).alias("total_24_hours"),
+                    fn.SUM(Case(None, [(Game.time > (now - timedelta(days=7)), 1)], 0)).alias("total_1_week"),
                 )
                 .join(Game)
-                .where(
-                    PlayerGame.player_id << uuids, Game.time > now - timedelta(days=30)
-                )
+                .where(PlayerGame.player_id << uuids, Game.time > now - timedelta(days=30))
                 .group_by(PlayerGame.player_id)
                 .dicts()
             )
@@ -105,21 +95,9 @@ class APIViews(RouteDescriber):
                     },
                     "rank": p.rank,
                     "points": p.points,
-                    "games_last_24_hours": int(
-                        player_games.get(str(p.uuid), {"total_24_hours": 0})[
-                            "total_24_hours"
-                        ]
-                    ),
-                    "games_last_week": int(
-                        player_games.get(str(p.uuid), {"total_1_week": 0})[
-                            "total_1_week"
-                        ]
-                    ),
-                    "games_last_month": int(
-                        player_games.get(str(p.uuid), {"total_last_month": 0})[
-                            "total_last_month"
-                        ]
-                    ),
+                    "games_last_24_hours": int(player_games.get(str(p.uuid), {"total_24_hours": 0})["total_24_hours"]),
+                    "games_last_week": int(player_games.get(str(p.uuid), {"total_1_week": 0})["total_1_week"]),
+                    "games_last_month": int(player_games.get(str(p.uuid), {"total_last_month": 0})["total_last_month"]),
                     "last_active": p.last_match and p.last_match.time.timestamp() or 0,
                     "last_game_finished": p.last_match and p.last_match.is_finished,
                     "last_game_id": p.last_match and p.last_match_id or 0,
@@ -142,15 +120,9 @@ class APIViews(RouteDescriber):
     def get_matches(
         page: int = 1,
         min_elo: Option(int, description="Minimum points (elo) of worst player") = 0,
-        max_elo: Option(
-            int, description="Maximum points (elo) of best player"
-        ) = 999999,
-        min_average_elo: Option(
-            int, description="Minimum points (elo) for the average of the match"
-        ) = 0,
-        max_average_elo: Option(
-            int, description="Maximum points (elo) for the average of the match"
-        ) = 999999,
+        max_elo: Option(int, description="Maximum points (elo) of best player") = 999999,
+        min_average_elo: Option(int, description="Minimum points (elo) for the average of the match") = 0,
+        max_average_elo: Option(int, description="Maximum points (elo) for the average of the match") = 999999,
     ):
         games = (
             Game.select(Game, Map)
@@ -192,19 +164,11 @@ class APIViews(RouteDescriber):
     def get_games(
         page: int = 1,
         min_elo: Option(int, description="Minimum points (elo) of worst player") = 0,
-        max_elo: Option(
-            int, description="Maximum points (elo) of best player"
-        ) = 999999,
-        min_average_elo: Option(
-            int, description="Minimum points (elo) for the average of the match"
-        ) = 0,
-        max_average_elo: Option(
-            int, description="Maximum points (elo) for the average of the match"
-        ) = 999999,
+        max_elo: Option(int, description="Maximum points (elo) of best player") = 999999,
+        min_average_elo: Option(int, description="Minimum points (elo) for the average of the match") = 0,
+        max_average_elo: Option(int, description="Maximum points (elo) for the average of the match") = 999999,
     ):
-        return APIViews.get_matches(
-            page, min_elo, max_elo, min_average_elo, max_average_elo
-        )
+        return APIViews.get_matches(page, min_elo, max_elo, min_average_elo, max_average_elo)
 
     @staticmethod
     @route(
@@ -307,14 +271,9 @@ class APIViews(RouteDescriber):
         ]:
             return 404, {"message": f"'{metric}' metric doesn't exist."}
 
+        formatted_metric_value = metric_value.replace("/", "").replace("\\", "").replace("~", "")
         f = open(
-            "cache/top_100_by_"
-            + metric
-            + "/"
-            + str(season)
-            + "/"
-            + metric_value.replace("/", "").replace("\\", "").replace("~", "")
-            + ".txt",
+            f"cache/top_100_by_{metric}/{season}/{formatted_metric_value}.txt",
             "r",
         )
         content = f.read()
@@ -376,9 +335,7 @@ class APIViews(RouteDescriber):
             formatted_default="<current timestamp>",
         ) = None,
     ):
-        min_date = datetime.fromtimestamp(
-            min_date or (datetime.now().timestamp() - 3600)
-        )
+        min_date = datetime.fromtimestamp(min_date or (datetime.now().timestamp() - 3600))
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
 
         if (max_date - min_date) > timedelta(days=30):
@@ -389,14 +346,10 @@ class APIViews(RouteDescriber):
                 condition = Game.trackmaster_limit <= max_elo
             else:
                 condition = Game.trackmaster_limit >= min_elo
-            condition = (
-                (Game.min_elo <= max_elo) & (Game.max_elo >= min_elo) & condition
-            )
+            condition = (Game.min_elo <= max_elo) & (Game.max_elo >= min_elo) & condition
             return [
                 fn.SUM(Case(None, [(condition, 1)], 0)).alias(alias),
-                fn.MAX(Case(None, [(condition, Game.time)], None)).alias(
-                    alias + "_date"
-                ),
+                fn.MAX(Case(None, [(condition, Game.time)], None)).alias(alias + "_date"),
             ]
 
         conditions = []
@@ -473,9 +426,7 @@ class APIViews(RouteDescriber):
             formatted_default="<current timestamp>",
         ) = None,
     ):
-        return PlayerAPIViews.get_map_statistics(
-            player, order_by, order, page, min_date, max_date
-        )
+        return PlayerAPIViews.get_map_statistics(player, order_by, order, page, min_date, max_date)
 
     @staticmethod
     @route(
@@ -546,9 +497,7 @@ class APIViews(RouteDescriber):
 
         if order_by not in ["played", "losses", "wins", "mvps"]:
             return
-        f = open(
-            "cache/get_players_matches_" + order_by + "_" + str(season) + ".txt", "r"
-        )
+        f = open("cache/get_players_matches_" + order_by + "_" + str(season) + ".txt", "r")
         content = f.read()
         f.close()
 
@@ -563,9 +512,7 @@ class APIViews(RouteDescriber):
     )
     def get_maps_statistics():
 
-        return 503, {
-            "message": "Endpoint disabled due to poor performance. It is now a season global computed metric."
-        }
+        return 503, {"message": "Endpoint disabled due to poor performance. It is now a season global computed metric."}
 
     @staticmethod
     @route(
@@ -574,12 +521,7 @@ class APIViews(RouteDescriber):
         description="Returns a list of up to 10 players matching the search string provided.",
     )
     def search_player(name: str = ""):
-        query = (
-            Player.select(Player.uuid, Player.name)
-            .where(Player.name.contains(name))
-            .paginate(1, 10)
-            .dicts()
-        )
+        query = Player.select(Player.uuid, Player.name).where(Player.name.contains(name)).paginate(1, 10).dicts()
         return 200, {"results": [q for q in query]}
 
     @staticmethod
@@ -622,9 +564,7 @@ class APIViews(RouteDescriber):
             formatted_default="<current timestamp>",
         ) = None,
     ):
-        return PlayerAPIViews.get_opponents_statistics(
-            player, order_by, order, page, min_date, max_date
-        )
+        return PlayerAPIViews.get_opponents_statistics(player, order_by, order, page, min_date, max_date)
 
     @staticmethod
     @route(

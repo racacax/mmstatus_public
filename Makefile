@@ -2,7 +2,8 @@ DOCKER_EXE		= docker exec -i
 DOCKER_EXE_TTY	= docker exec -it
 DCO_EXE			= docker compose
 SEPARATOR       = _
-PYTHON			= ${DOCKER_EXE_TTY} mmstatus_web python
+PYTHON_TTY		= ${DOCKER_EXE_TTY} mmstatus_web python
+PYTHON			= ${DOCKER_EXE} mmstatus_web python
 
 up:
 	${DCO_EXE} up
@@ -13,11 +14,11 @@ stop:
 update build:
 	${DCO_EXE} build
 init:
-	${PYTHON} scripts/init.py
+	${PYTHON_TTY} scripts/init.py
 run_sql:
-	${PYTHON} scripts/run_sql.py ${SQL_SCRIPT}
+	${PYTHON_TTY} scripts/run_sql.py ${SQL_SCRIPT}
 create_season:
-	${PYTHON} scripts/create_season.py
+	${PYTHON_TTY} scripts/create_season.py
 watch:
 	${DOCKER_EXE_TTY} mmstatus_web pem watch
 migrate:
@@ -33,3 +34,9 @@ show_logs:
 	${DOCKER_EXE} mmstatus_web tail -f logs/${FILE}.log | grep "${PATTERN}"
 show_all_logs:
 	FILE="*" PATTERN="${PATTERN}" make show_logs
+lint:
+	${PYTHON} -m black .
+	${PYTHON} -m flake8 .
+lintt:
+	${PYTHON_TTY} -m black .
+	${PYTHON_TTY} -m flake8 .
