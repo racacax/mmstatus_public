@@ -1,4 +1,4 @@
 [flake8]
-exclude = venv,migrations,cache,logs
+exclude = venv,migrations,cache,logs,node_modules,.github,.idea
 max-line-length = 120
 ignore = E711,E712,F722,F821,W503
