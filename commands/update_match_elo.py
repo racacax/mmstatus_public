@@ -24,9 +24,7 @@ def update_match_elo():
             )
             logger.info(f"Found {len(games)} with uncomputed elo")
             for game in games:
-                logger.info(
-                    f"Updating elo for match id {game.id}", extra={"game": game}
-                )
+                logger.info(f"Updating elo for match id {game.id}", extra={"game": game})
                 try:
                     min_elo = 999999999
                     max_elo = 0
@@ -49,7 +47,7 @@ def update_match_elo():
                     )
         except Exception as e2:
             logger.error(
-                f"General error in the thread",
+                "General error in the thread",
                 extra={"exception": e2, "traceback": traceback.format_exc()},
             )
         logger.info("Waiting 5s before starting the thread again...")

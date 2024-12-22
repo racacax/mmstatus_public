@@ -18,10 +18,7 @@ def update_player_ranks():
                 Player.select(Player)
                 .where(
                     (Player.last_points_update < datetime.now() - timedelta(hours=12))
-                    & (
-                        (Player.points != 0)
-                        | (Player.last_points_update == datetime.fromtimestamp(0))
-                    )
+                    & ((Player.points != 0) | (Player.last_points_update == datetime.fromtimestamp(0)))
                 )
                 .order_by(Player.last_points_update.asc())
                 .paginate(1, 100)
@@ -33,9 +30,9 @@ def update_player_ranks():
                 continue
             try:
                 ids = [str(p.uuid) for p in players]
-                logger.info(f"Updating players", extra={"ids": ids})
+                logger.info("Updating players", extra={"ids": ids})
                 ranks = NadeoLive.get_player_ranks(ids)
-                logger.info(f"get_player_ranks response", extra={"response": ranks})
+                logger.info("get_player_ranks response", extra={"response": ranks})
                 scores = {p["player"]: p["score"] for p in ranks["results"]}
                 ranks = {p["player"]: p["rank"] for p in ranks["results"]}
                 for p in players:
@@ -57,7 +54,7 @@ def update_player_ranks():
                                 pg.save()
                     except Exception as e:
                         logger.error(
-                            f"Error while updating player rank",
+                            "Error while updating player rank",
                             extra={
                                 "exception": e,
                                 "traceback": traceback.format_exc(),
@@ -66,7 +63,7 @@ def update_player_ranks():
                         )
             except Exception as e:
                 logger.error(
-                    f"Error while updating players ranks",
+                    "Error while updating players ranks",
                     extra={
                         "exception": e,
                         "traceback": traceback.format_exc(),
@@ -74,7 +71,7 @@ def update_player_ranks():
                 )
         except Exception as e2:
             logger.error(
-                f"General error in the thread",
+                "General error in the thread",
                 extra={"exception": e2, "traceback": traceback.format_exc()},
             )
         logger.info("Waiting 10s before starting thread again...")

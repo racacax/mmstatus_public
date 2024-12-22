@@ -31,8 +31,7 @@ def update_players():
             try:
                 names = NadeoOauth.get_player_display_names(ids)
                 club_tags = {
-                    entry["accountId"]: entry["clubTag"]
-                    for entry in (NadeoCore.get_player_club_tags(ids) or [])
+                    entry["accountId"]: entry["clubTag"] for entry in (NadeoCore.get_player_club_tags(ids) or [])
                 }
                 for p in players:
                     p.name = names.get(str(p.uuid), "Name unknown")
@@ -41,7 +40,7 @@ def update_players():
                     p.save()
             except Exception as e:
                 logger.error(
-                    f"Error while updating players",
+                    "Error while updating players",
                     extra={
                         "exception": e,
                         "traceback": traceback.format_exc(),
@@ -53,7 +52,7 @@ def update_players():
 
         except Exception as e2:
             logger.error(
-                f"General error in the thread",
+                "General error in the thread",
                 extra={"exception": e2, "traceback": traceback.format_exc()},
             )
         if count == 50:

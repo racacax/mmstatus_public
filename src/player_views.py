@@ -256,12 +256,8 @@ class PlayerAPIViews(RouteDescriber):
         Opponent = Player.alias("opponent")
         OpponentGame = PlayerGame.alias("pg2")
         total_played = fn.COUNT(Opponent.uuid)
-        total_played_against = fn.SUM(
-            Case(None, [((PlayerGame.is_win != OpponentGame.is_win), 1)], 0)
-        )
-        total_played_along = fn.SUM(
-            Case(None, [((PlayerGame.is_win == OpponentGame.is_win), 1)], 0)
-        )
+        total_played_against = fn.SUM(Case(None, [((PlayerGame.is_win != OpponentGame.is_win), 1)], 0))
+        total_played_along = fn.SUM(Case(None, [((PlayerGame.is_win == OpponentGame.is_win), 1)], 0))
         total_games_lost_against = fn.SUM(
             Case(
                 None,
@@ -379,9 +375,7 @@ class PlayerAPIViews(RouteDescriber):
         min_date = datetime.fromtimestamp(min_date)
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
 
-        season = Season.filter(
-            Season.start_time <= min_date, Season.end_time >= max_date
-        ).get_or_none()
+        season = Season.filter(Season.start_time <= min_date, Season.end_time >= max_date).get_or_none()
         if not season:
             return 404, {"message": "Cannot retrieve any season with these filters"}
 

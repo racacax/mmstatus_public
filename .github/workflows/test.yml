@@ -20,5 +20,7 @@ jobs:
         run: touch tk.txt && touch nd_tk.txt && cp .env.test .env && chmod a+x *.sh
       - name: Launch docker container
         run: docker-compose up -d
+      - name: Run lint
+        run: make lint
       - name: Run test suite
         run: sleep 10 && make test

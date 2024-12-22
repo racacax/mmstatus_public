@@ -24,11 +24,7 @@ class NadeoAudience:
             result = NadeoCore.get_tokens(cls.REFRESH_TOKEN)
         cls.ACCESS_TOKEN = result["accessToken"]
         cls.EXPIRE_TIME = datetime.fromtimestamp(
-            json.loads(
-                base64.b64decode(
-                    cls.ACCESS_TOKEN.split(".")[1].split("_")[0] + "========"
-                )
-            )["exp"]
+            json.loads(base64.b64decode(cls.ACCESS_TOKEN.split(".")[1].split("_")[0] + "========"))["exp"]
         )
         cls.REFRESH_TOKEN = result["refreshToken"]
 
@@ -51,11 +47,7 @@ class NadeoCore:
         result = cls.get_tokens(settings.NADEO_REFRESH_TOKEN)
         cls.ACCESS_TOKEN = result["accessToken"]
         cls.EXPIRE_TIME = datetime.fromtimestamp(
-            json.loads(
-                base64.b64decode(
-                    cls.ACCESS_TOKEN.split(".")[1].split("_")[0] + "========"
-                )
-            )["exp"]
+            json.loads(base64.b64decode(cls.ACCESS_TOKEN.split(".")[1].split("_")[0] + "========"))["exp"]
         )
         settings.NADEO_REFRESH_TOKEN = result["refreshToken"]
         with open(settings.NADEO2_FILE_PATH, "w") as f:
@@ -170,11 +162,7 @@ class NadeoOauth(NadeoAudience):
         result = cls.get_tokens(cls.REFRESH_TOKEN)
         cls.ACCESS_TOKEN = result["access_token"]
         cls.EXPIRE_TIME = datetime.fromtimestamp(
-            json.loads(
-                base64.b64decode(
-                    cls.ACCESS_TOKEN.split(".")[1].split("_")[0] + "========"
-                )
-            )["exp"]
+            json.loads(base64.b64decode(cls.ACCESS_TOKEN.split(".")[1].split("_")[0] + "========"))["exp"]
         )
         cls.REFRESH_TOKEN = result["refresh_token"]
         with open(settings.NADEO_FILE_PATH, "w") as f:

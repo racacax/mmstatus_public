@@ -86,3 +86,5 @@ You can also see them via command line with `make show_all_logs` command.
 You can also use `FILE="Your file" make show_logs` (e.g `FILE="get_matches" make show_logs`) to see logs for a special function only
 
 You can also filter logs by adding a grep pattern (for both show_logs and show_all_logs). E.g. : `PATTERN="WARNING" FILE="get_matches" make show_logs`
+### Lint
+If you want to do any contribution, run `make lintt` before any commit to check for formatting errors. Black will reformat the file and flake8 will show remaining errors.

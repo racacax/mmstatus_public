@@ -1,10 +1,7 @@
 import os
-import sys
 
 import pymysql
 import pytest
-
-sys.path.append(os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
 
 import settings
 
@@ -32,9 +29,7 @@ def pytest_sessionstart(session):
         raise ValueError(f"DATABASE_NAME should be {TEST_DB}")
     conn = get_conn()
     conn.cursor().execute("DROP DATABASE IF EXISTS`" + TEST_DB + "`;")
-    conn.cursor().execute(
-        "CREATE DATABASE `" + TEST_DB + "` COLLATE utf8mb4_general_ci"
-    )
+    conn.cursor().execute("CREATE DATABASE `" + TEST_DB + "` COLLATE utf8mb4_general_ci")
     conn.close()
     print(os.popen("pem migrate").read())
 
