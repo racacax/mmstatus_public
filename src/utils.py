@@ -11,6 +11,8 @@ from uuid import UUID
 
 import requests
 
+from models import Player
+
 
 class CustomJSONEncoder(json.JSONEncoder):
     def default(self, o):
@@ -235,3 +237,17 @@ def calculate_points(rank, max_points=10000, min_points=1000, total_players=5000
     points = int(max_points - scale_factor * (math.log(rank + 1) - math.log(2)))
 
     return max(min_points, points)
+
+
+def get_trackmaster_limit():
+    f_trackmaster = (
+        Player.select(Player.points)
+        .where(Player.rank <= 10, Player.points >= 4000)
+        .order_by(Player.rank.desc())
+        .paginate(1, 1)
+    )
+
+    if len(f_trackmaster) > 0:
+        return f_trackmaster[0].points
+    else:
+        return 99999

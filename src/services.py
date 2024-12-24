@@ -5,6 +5,7 @@ from datetime import datetime
 import requests
 
 import settings
+from src.types import NadeoParticipant, NadeoMatch
 from src.utils import post, authenticated, get
 
 
@@ -101,7 +102,7 @@ class NadeoLive(NadeoAudience):
 
     @classmethod
     @authenticated
-    def get_match_participants(cls, id: int):
+    def get_match_participants(cls, id: int) -> list[NadeoParticipant]:
         return get(f"{cls.MEET_BASE_URL}matches/{id}/participants", cls.ACCESS_TOKEN)
 
     @classmethod
@@ -111,7 +112,7 @@ class NadeoLive(NadeoAudience):
 
     @classmethod
     @authenticated
-    def get_match(cls, id: int):
+    def get_match(cls, id: int) -> NadeoMatch:
         return get(f"{cls.MEET_BASE_URL}matches/{id}", cls.ACCESS_TOKEN)
 
     @classmethod
