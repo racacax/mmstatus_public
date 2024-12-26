@@ -4,7 +4,7 @@ import traceback
 from models import Player, Zone
 from src.log_utils import create_logger
 from src.services import NadeoCore
-from threads.abstract_thread import AbstractThread
+from src.threads.abstract_thread import AbstractThread
 
 logger = create_logger("update_player_zones")
 

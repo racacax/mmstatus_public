@@ -4,7 +4,7 @@ from datetime import datetime
 
 from models import Player
 from src.log_utils import create_logger
-from threads.abstract_thread import AbstractThread
+from src.threads.abstract_thread import AbstractThread
 
 logger = create_logger("update_top_player_positions")
 

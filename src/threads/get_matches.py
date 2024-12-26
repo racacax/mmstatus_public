@@ -4,7 +4,7 @@ from datetime import datetime
 from typing import Union
 
 import settings
-from threads.abstract_thread import AbstractThread
+from src.threads.abstract_thread import AbstractThread
 from models import PlayerGame, Game, Map, Player
 from src.log_utils import create_logger
 from src.services import NadeoLive
@@ -121,11 +121,9 @@ class GetMatchesThread(AbstractThread):
                 extra={"error": e, "traceback": traceback.format_exc()},
             )
             if "lock" in str(e).lower():
-                logger.warning(
-                    f"Previous error for match id {self.match_id} was a deadlock. We'll restart the transaction"
-                )
-                time.sleep(1)
-                return self.insert_match()
+                logger.warning(f"Previous error for match id {self.match_id} was a deadlock")
+            time.sleep(1)
+            return self.insert_match()
         return True
 
     def run_insert_matches_loop(self):

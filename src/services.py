@@ -5,7 +5,7 @@ from datetime import datetime
 import requests
 
 import settings
-from src.types import NadeoParticipant, NadeoMatch
+from src.types import NadeoParticipant, NadeoMatch, NadeoMapInfo, NadeoMatchTeam, NadeoPlayerRanks, NadeoAccountInfo
 from src.utils import post, authenticated, get
 
 
@@ -57,7 +57,7 @@ class NadeoCore:
 
     @classmethod
     @authenticated
-    def get_player_club_tags(cls, account_ids: list):
+    def get_player_club_tags(cls, account_ids: list) -> list[NadeoAccountInfo]:
         return get(
             f"{cls.BASE_URL}accounts/clubTags/?accountIdList={','.join(account_ids)}",
             token=cls.ACCESS_TOKEN,
@@ -97,7 +97,7 @@ class NadeoLive(NadeoAudience):
 
     @classmethod
     @authenticated
-    def get_map_info(cls, map_uid):
+    def get_map_info(cls, map_uid) -> NadeoMapInfo:
         return get(f"{cls.BASE_URL}token/map/{map_uid}", cls.ACCESS_TOKEN)
 
     @classmethod
@@ -107,7 +107,7 @@ class NadeoLive(NadeoAudience):
 
     @classmethod
     @authenticated
-    def get_match_teams(cls, id: int):
+    def get_match_teams(cls, id: int) -> list[NadeoMatchTeam]:
         return get(f"{cls.MEET_BASE_URL}matches/{id}/teams", cls.ACCESS_TOKEN)
 
     @classmethod
@@ -117,7 +117,7 @@ class NadeoLive(NadeoAudience):
 
     @classmethod
     @authenticated
-    def get_player_ranks(cls, account_ids: list):
+    def get_player_ranks(cls, account_ids: list) -> NadeoPlayerRanks:
         players = "&players[]=".join(account_ids)
         return get(
             f"{cls.MEET_BASE_URL}matchmaking/2/leaderboard/players?players[]={players}",
@@ -172,6 +172,6 @@ class NadeoOauth(NadeoAudience):
 
     @classmethod
     @authenticated
-    def get_player_display_names(cls, account_ids: list):
+    def get_player_display_names(cls, account_ids: list) -> dict[str, str]:
         ids = "&accountId[]=".join(account_ids)
         return cls.get(f"display-names?accountId[]={ids}")
