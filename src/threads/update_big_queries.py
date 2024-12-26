@@ -3,12 +3,14 @@ import os
 import time
 import traceback
 from datetime import datetime, time as time2, timedelta
+from typing import Callable
 
 from peewee import fn, Case, JOIN
 
 from models import Player, PlayerGame, Game, Season, Zone, PlayerSeason, Map
 from src.log_utils import create_logger
 from src.utils import CustomJSONEncoder, RANKS, calculate_points
+from src.threads.abstract_thread import AbstractThread
 
 logger = create_logger("update_big_queries")
 
@@ -455,17 +457,17 @@ def get_activity_per_rank_distribution(min_date, _):
     )
 
 
-def update_big_queries():
-    path = "cache/"
-    if not os.path.exists(path):
-        os.makedirs(path)
-    while True:
-        season = Season.get_current_season()
+class UpdateBigQueriesThread(AbstractThread):
+    def __init__(self):
+        self.path = "cache/"
+        if not os.path.exists(self.path):
+            os.makedirs(self.path)
 
-        queries = [
+    def get_queries(self, season: Season):
+        return [
             *get_leaderboards_funcs(season and season.id or 1),
             get_maps_statistics,
-            get_top_100_per_country_func(path, season),
+            get_top_100_per_country_func(self.path, season),
             get_activity_per_rank_distribution,
             *get_activity_per_country_funcs(),
             *get_activity_players_per_country_funcs(),
@@ -473,23 +475,35 @@ def update_big_queries():
             *get_activity_hours_funcs(),
             *get_players_matches_funcs(),
         ]
+
+    def run_query(self, q: Callable[[int, int], str], season: Season):
+        name = q.__name__
+        logger.info(f"Starting query {name}")
+        try:
+            results = q(season.start_time, season.end_time)
+            f = open(self.path + name + "_" + str(season.id) + ".txt", "w")
+            f.write(results)
+            f.close()
+        except Exception as e:
+            logger.error(
+                f"Error for query {name}",
+                extra={"exception": e, "traceback": traceback.format_exc()},
+            )
+
+    def run_iteration(self):
+        season = Season.get_current_season()
+
+        queries = self.get_queries(season)
         for q in queries:
-            name = q.__name__
-            logger.info(f"Starting query {name}")
-            try:
-                results = q(season.start_time, season.end_time)
-                f = open(path + name + "_" + str(season.id) + ".txt", "w")
-                f.write(results)
-                f.close()
-            except Exception as e:
-                logger.error(
-                    f"Error for query {name}",
-                    extra={"exception": e, "trackeback": traceback.format_exc()},
-                )
+            self.run_query(q, season)
             logger.info("Waiting 60s before running new query...")
             time.sleep(
                 60
             )  # since some of these query are locking the whole database, we add gaps between queries to allow other
             # normal threads to work again
-        logger.info("Waiting 1h before updating data...")
-        time.sleep(3600)
+
+    def handle(self):
+        while True:
+            self.run_iteration()
+            logger.info("Waiting 1h before updating data...")
+            time.sleep(3600)
