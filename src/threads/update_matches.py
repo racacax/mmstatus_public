@@ -83,8 +83,8 @@ class UpdateMatchesThread(AbstractThread):
                 )
                 player.last_match = last_pg and last_pg.game or None
                 player.save()
-                pg.delete()
-            match.delete()
+                pg.delete_instance()
+            match.delete_instance(recursive=True)
 
     def complete_match(self, match: Game):
         """
