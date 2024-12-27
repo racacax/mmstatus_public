@@ -1,3 +1,4 @@
+import os
 from datetime import datetime
 
 from models import Game
@@ -10,17 +11,18 @@ def migrate_forward(op, old_orm, new_orm):
     updated + might be bugged bcs of server crash
     These matches will either be correctly updated or deleted
     """
-    print("Updating old matches")
+    if os.environ.get("ENVIRONMENT") != "test":
+        print("Updating old matches")
 
-    update_query = Game.update(is_finished=False).where(
-        (Game.is_finished == True) &
-        (Game.rounds == 0) &
-        (Game.time > datetime.fromtimestamp(1734204680)) &
-        (Game.time < datetime.fromtimestamp(1735404680))
-    )
-    rows_updated = update_query.execute()
+        update_query = Game.update(is_finished=False).where(
+            (Game.is_finished == True) &
+            (Game.rounds == 0) &
+            (Game.time > datetime.fromtimestamp(1734204680)) &
+            (Game.time < datetime.fromtimestamp(1735404680))
+        )
+        rows_updated = update_query.execute()
 
-    print(f"{rows_updated} matches updated")
+        print(f"{rows_updated} matches updated")
 
 def migrate_backward(op, old_orm, new_orm):
     pass
