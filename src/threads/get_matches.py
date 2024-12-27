@@ -102,7 +102,7 @@ class GetMatchesThread(AbstractThread):
                     match_o = Game.create(
                         id=match["id"],
                         time=datetime.fromtimestamp(match["startDate"]),
-                        is_finished=match["status"] == "COMPLETED",
+                        is_finished=False,
                         map=match_map,
                         trackmaster_limit=tm_limit,
                     )

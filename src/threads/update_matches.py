@@ -2,7 +2,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from models import Game
+from models import Game, Player, PlayerGame
 from settings import db
 from src.log_utils import create_logger
 from src.services import NadeoLive
@@ -63,6 +63,29 @@ class UpdateMatchesThread(AbstractThread):
             player.last_points_update = datetime.fromtimestamp(0)
             player.save()
 
+    @staticmethod
+    def delete_bugged_match(match: Game):
+        """
+        When server doesn't start, match will still complete.
+        If it happens, we delete the match.
+        :param match:
+        :return:
+        """
+        with db.atomic():
+            for pg in match.player_games:
+                player: Player = pg.player
+                last_pg = (
+                    PlayerGame.select(PlayerGame)
+                    .join(Game)
+                    .where(PlayerGame.player == player)
+                    .paginate(2, 1)
+                    .get_or_none()
+                )
+                player.last_match = last_pg and last_pg.game or None
+                player.save()
+                pg.delete_instance()
+            match.delete_instance(recursive=True)
+
     def complete_match(self, match: Game):
         """
         Update db match info and starts the update of db player
@@ -76,18 +99,23 @@ class UpdateMatchesThread(AbstractThread):
             f"Terminating match id {match.id}",
             {"response": teams},
         )
-        match.is_finished = True
-        match.rounds = sum(t["score"] for t in teams)
-        match.save()
+        rounds = sum(t["score"] for t in teams)
+        if rounds > 0:
+            match.is_finished = True
+            match.rounds = rounds
+            match.save()
 
-        logger.info(f"Fetching participants results for match id {match.id}")
-        participants = NadeoLive.get_match_participants(match.id)
-        logger.info(
-            f"Participants response for match id {match.id}",
-            {"response": participants},
-        )
+            logger.info(f"Fetching participants results for match id {match.id}")
+            participants = NadeoLive.get_match_participants(match.id)
+            logger.info(
+                f"Participants response for match id {match.id}",
+                {"response": participants},
+            )
 
-        self.update_players_match(match, participants, teams)
+            self.update_players_match(match, participants, teams)
+        else:
+            logger.info(f"Match id {match.id} is bugged. Deleting the match.")
+            self.delete_bugged_match(match)
 
     def update_match(self, match: Game):
         """
