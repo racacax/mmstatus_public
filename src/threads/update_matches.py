@@ -77,6 +77,7 @@ class UpdateMatchesThread(AbstractThread):
                 last_pg = (
                     PlayerGame.select(PlayerGame)
                     .join(Game)
+                    .order_by(Game.id.desc())
                     .where(PlayerGame.player == player)
                     .paginate(2, 1)
                     .get_or_none()
