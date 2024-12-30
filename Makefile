@@ -27,9 +27,9 @@ migrate:
 bash ssh:
 	${DOCKER_EXE_TTY} mmstatus_web bash
 testt:
-	${DOCKER_EXE_TTY} mmstatus_web pytest --verbose
+	${DOCKER_EXE_TTY} mmstatus_web pytest -n auto --verbose
 test:
-	${DOCKER_EXE} mmstatus_web pytest --verbose
+	${DOCKER_EXE} mmstatus_web pytest -n auto --verbose
 show_logs:
 	${DOCKER_EXE} mmstatus_web tail -f logs/${FILE}.log | grep "${PATTERN}"
 show_all_logs:
