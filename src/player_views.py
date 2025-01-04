@@ -371,12 +371,25 @@ class PlayerAPIViews(RouteDescriber):
             description="Unix timestamp representing the end date of filtered data",
             formatted_default="<current timestamp>",
         ) = None,
+        season: Option(
+            int,
+            description="ID representing a season (provided by the seasons endpoint)",
+            formatted_default="<current season>",
+        ) = -1,
     ):
-        min_date = datetime.fromtimestamp(min_date)
-        max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
+        selected_season = None
+        show_season_points = True
+        if min_date or max_date:
+            show_season_points = False
+            min_date = datetime.fromtimestamp(min_date)
+            max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
+            selected_season = Season.filter(Season.start_time <= min_date, Season.end_time >= max_date).get_or_none()
+        elif season:
+            selected_season = Season.get(id=season)
+            min_date = selected_season.start_time
+            max_date = selected_season.end_time
 
-        season = Season.filter(Season.start_time <= min_date, Season.end_time >= max_date).get_or_none()
-        if not season:
+        if not selected_season:
             return 404, {"message": "Cannot retrieve any season with these filters"}
 
         total_played = fn.COUNT(PlayerGame.id)
@@ -403,35 +416,46 @@ class PlayerAPIViews(RouteDescriber):
                 Player.uuid == player,
                 Game.time >= min_date,
                 Game.time <= max_date,
-                PlayerSeason.season == season,
+                PlayerSeason.season == selected_season,
             )
             .group_by(Player.uuid)
             .dicts()
         )
         if len(query) > 0:
             data = query[0]
-        else:
-            data = {
-                "rank": "N/A",
-                "points": "N/A",
-                "total_played": 0,
-                "total_wins": 0,
-                "total_losses": 0,
-                "total_mvp": 0,
-                "uuid": player,
-                "name": "N/A",
+            points = data["points"]
+            if not show_season_points:
+                # Get player points at the time of the filter
+                last_match = (
+                    PlayerGame.select(PlayerGame.points_after_match)
+                    .join(Game)
+                    .switch(PlayerGame)
+                    .join(Player)
+                    .where(
+                        Player.uuid == player,
+                        Game.time >= selected_season.start_time,
+                        # maybe player didn't play any match during the filtered time
+                        Game.time <= max_date,
+                    )
+                    .order_by(PlayerGame.id.desc())
+                    .paginate(1, 1)
+                    .get_or_none()
+                )
+                if last_match:
+                    points = last_match.points_after_match
+            return 200, {
+                "uuid": str(data["uuid"]),
+                "name": data["name"],
+                "club_tag": data["club_tag"],
+                "stats": {
+                    "season": selected_season.name,
+                    "rank": data["rank"],
+                    "points": points,
+                    "total_played": int(data["total_played"]),
+                    "total_wins": int(data["total_wins"]),
+                    "total_losses": int(data["total_losses"]),
+                    "total_mvp": int(data["total_mvp"]),
+                },
             }
-        return 200, {
-            "uuid": str(data["uuid"]),
-            "name": data["name"],
-            "club_tag": data["club_tag"],
-            "stats": {
-                "season": "Spring 2024",
-                "rank": data["rank"],
-                "points": data["points"],
-                "total_played": int(data["total_played"]),
-                "total_wins": int(data["total_wins"]),
-                "total_losses": int(data["total_losses"]),
-                "total_mvp": int(data["total_mvp"]),
-            },
-        }
+        else:
+            return 404, {"message": "Current player either doesn't exist or didn't play this season"}

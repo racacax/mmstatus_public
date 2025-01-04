@@ -586,8 +586,13 @@ class APIViews(RouteDescriber):
             description="Unix timestamp representing the end date of filtered data",
             formatted_default="<current timestamp>",
         ) = None,
+        season: Option(
+            int,
+            description="ID representing a season (provided by the seasons endpoint)",
+            formatted_default="<current season>",
+        ) = -1,
     ):
-        return PlayerAPIViews.get_statistics(player, min_date, max_date)
+        return PlayerAPIViews.get_statistics(player, min_date, max_date, season)
 
     @staticmethod
     @route(
