@@ -4,6 +4,9 @@ import pymysql
 import pytest
 
 import settings
+import src.utils
+
+pytest_plugins = ["mocks.season"]
 
 
 def get_conn():
@@ -16,7 +19,7 @@ def get_conn():
 
 db = settings.db
 
-TEST_DB = "mmstatus_test"
+TEST_DB = f"mmstatus_test_{os.environ.get('PYTEST_XDIST_WORKER')}"
 
 
 def pytest_sessionstart(session):
@@ -24,6 +27,11 @@ def pytest_sessionstart(session):
     Configures test database for tests scenarios
 
     """
+
+    def stop_request(*args, **kwargs):
+        raise Exception("Requests shouldn't be called")
+
+    src.utils.get = stop_request
     print("Configuring database for tests...")
     if settings.DATABASE_NAME != TEST_DB:
         raise ValueError(f"DATABASE_NAME should be {TEST_DB}")
