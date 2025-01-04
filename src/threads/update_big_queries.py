@@ -44,13 +44,17 @@ def get_countries_leaderboard(season_id):
                 "file_name": o["file_name"],
                 "country_alpha3": o["country_alpha3"],
                 "points": 0,
+                "count": 0,
             }
-        countries[o["country"]]["points"] += computed_points
+        if countries[o["country"]]["count"] < 10:
+            countries[o["country"]]["points"] += computed_points
+            countries[o["country"]]["count"] += 1
     countries = countries.values()
     countries = sorted(countries, key=lambda x: x["points"], reverse=True)
     return json.dumps(
         {
             "last_updated": datetime.now().timestamp(),
+            "compute_method": "top_10",
             "results": countries,
         },
     )
@@ -76,16 +80,16 @@ def get_clubs_leaderboard(season_id):
     for o in objs:
         computed_points = calculate_points(o["rank"], total_players=total_players)
         if not o["club_tag"] in club_tags:
-            club_tags[o["club_tag"]] = {
-                "name": o["club_tag"],
-                "points": 0,
-            }
-        club_tags[o["club_tag"]]["points"] += computed_points
+            club_tags[o["club_tag"]] = {"name": o["club_tag"], "points": 0, "count": 0}
+        if club_tags[o["club_tag"]]["count"] < 10:
+            club_tags[o["club_tag"]]["count"] += 1
+            club_tags[o["club_tag"]]["points"] += computed_points
     club_tags = club_tags.values()
     club_tags = sorted(club_tags, key=lambda x: x["points"], reverse=True)
     return json.dumps(
         {
             "last_updated": datetime.now().timestamp(),
+            "compute_method": "top_10",
             "results": club_tags,
         },
     )
