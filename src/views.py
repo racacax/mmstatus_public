@@ -563,8 +563,13 @@ class APIViews(RouteDescriber):
             description="Unix timestamp representing the end date of filtered data",
             formatted_default="<current timestamp>",
         ) = None,
+        group_by: Option(
+            str,
+            description="On which opponent type should the stats be made",
+            enum=["uuid", "country", "club"],
+        ) = "uuid",
     ):
-        return PlayerAPIViews.get_opponents_statistics(player, order_by, order, page, min_date, max_date)
+        return PlayerAPIViews.get_opponents_statistics(player, order_by, order, page, min_date, max_date, group_by)
 
     @staticmethod
     @route(

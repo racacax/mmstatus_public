@@ -199,7 +199,10 @@ class Option:
         self.enum = enum
 
     def __call__(self, value):
-        return self.cast(value)
+        if self.cast == bool:
+            return str(value).lower() == "true"
+        else:
+            return self.cast(value)
 
 
 POINTS_TYPE = [str(r["min_elo"]) for r in RANKS]

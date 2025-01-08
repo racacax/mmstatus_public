@@ -5,6 +5,7 @@ from peewee import Case, fn
 
 from models import Player, PlayerGame, Game, Map, PlayerSeason, Season
 from src.utils import Option, route, RouteDescriber
+from src.view_utils.opponents_statistics import get_query
 
 
 class PlayerAPIViews(RouteDescriber):
@@ -226,7 +227,7 @@ class PlayerAPIViews(RouteDescriber):
             str,
             description="With which field should the data be sorted",
             enum=[
-                "most_played",
+                "played",
                 "played_against",
                 "played_along",
                 "games_lost_against",
@@ -234,7 +235,7 @@ class PlayerAPIViews(RouteDescriber):
                 "games_lost_along",
                 "games_won_along",
             ],
-        ) = "most_played",
+        ) = "played",
         order: Option(
             str,
             description="Whether sorting should be ascending or descending",
@@ -250,107 +251,16 @@ class PlayerAPIViews(RouteDescriber):
             description="Unix timestamp representing the end date of filtered data",
             formatted_default="<current timestamp>",
         ) = None,
+        group_by: Option(
+            str,
+            description="On which opponent type should the stats be made",
+            enum=["uuid", "country", "club"],
+        ) = "uuid",
     ):
         min_date = datetime.fromtimestamp(min_date)
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
-        Opponent = Player.alias("opponent")
-        OpponentGame = PlayerGame.alias("pg2")
-        total_played = fn.COUNT(Opponent.uuid)
-        total_played_against = fn.SUM(Case(None, [((PlayerGame.is_win != OpponentGame.is_win), 1)], 0))
-        total_played_along = fn.SUM(Case(None, [((PlayerGame.is_win == OpponentGame.is_win), 1)], 0))
-        total_games_lost_against = fn.SUM(
-            Case(
-                None,
-                [(((PlayerGame.is_win == False) & (OpponentGame.is_win == True)), 1)],
-                0,
-            )
-        )
-        total_games_won_against = fn.SUM(
-            Case(
-                None,
-                [(((OpponentGame.is_win == False) & (PlayerGame.is_win == True)), 1)],
-                0,
-            )
-        )
-        total_games_lost_along = fn.SUM(
-            Case(
-                None,
-                [(((PlayerGame.is_win == False) & (OpponentGame.is_win == False)), 1)],
-                0,
-            )
-        )
-        total_games_won_along = fn.SUM(
-            Case(
-                None,
-                [(((OpponentGame.is_win == True) & (PlayerGame.is_win == True)), 1)],
-                0,
-            )
-        )
-
-        if order_by == "played_against":
-            order_by = total_played_against
-        elif order_by == "played_along":
-            order_by = total_played_along
-        elif order_by == "games_lost_against":
-            order_by = total_games_lost_against
-        elif order_by == "games_won_against":
-            order_by = total_games_won_against
-        elif order_by == "games_lost_along":
-            order_by = total_games_lost_along
-        elif order_by == "games_won_along":
-            order_by = total_games_won_along
-        else:
-            order_by = total_played
-
-        if order == "desc":
-            order_by = order_by.desc()
-        else:
-            order_by = order_by.asc()
-
-        query = (
-            Player.select(
-                Opponent.uuid,
-                Opponent.name,
-                total_played.alias("total_played"),
-                total_played_against.alias("total_played_against"),
-                total_played_along.alias("total_played_along"),
-                total_games_lost_against.alias("total_games_lost_against"),
-                total_games_won_against.alias("total_games_won_against"),
-                total_games_lost_along.alias("total_games_lost_along"),
-                total_games_won_along.alias("total_games_won_along"),
-            )
-            .join(PlayerGame)
-            .join(Game)
-            .join(OpponentGame)
-            .join(Opponent)
-            .where(
-                Player.uuid == player,
-                Game.time >= min_date,
-                Game.time <= max_date,
-            )
-            .group_by(Opponent.uuid)
-            .order_by(order_by)
-            .paginate(page, 10)
-            .dicts()
-        )
-        data = []
-        for q in query:
-            if q["uuid"] == player:
-                continue
-            data.append(
-                {
-                    "uuid": str(q["uuid"]),
-                    "name": q["name"],
-                    "total_played": q["total_played"],
-                    "total_played_against": int(q["total_played_against"]),
-                    "total_played_along": int(q["total_played_along"]),
-                    "total_games_lost_against": int(q["total_games_lost_against"]),
-                    "total_games_won_against": int(q["total_games_won_against"]),
-                    "total_games_lost_along": int(q["total_games_lost_along"]),
-                    "total_games_won_along": int(q["total_games_won_along"]),
-                }
-            )
-        return 200, {"results": data, "player": player}
+        data = get_query(min_date, max_date, player, group_by, f"total_{order_by}", order, page)
+        return 200, {"results": [e for e in data], "player": player}
 
     @staticmethod
     @route(
