@@ -24,6 +24,7 @@ class GetMatchesThread(AbstractThread):
         logger.info(f"Starting get_matches thread. Last match: {last_match}")
         match_id = (last_match and last_match.id or settings.START_ID) + 1
         self.match_id = max(match_id, settings.START_ID)
+        self.tries = 0
 
     def get_match(self) -> Union[NadeoMatch, None]:
         """
@@ -133,9 +134,14 @@ class GetMatchesThread(AbstractThread):
         """
         while self.insert_match():
             self.match_id += 1
+            self.tries = 0
 
     def handle(self):
         while True:
+            if self.tries > 5:
+                self.tries = 0
+                self.match_id += 1
             self.run_insert_matches_loop()
+            self.tries += 1
             logger.info("Waiting 30s before fetching new matches")
             time.sleep(30)
