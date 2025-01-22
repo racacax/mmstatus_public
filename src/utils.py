@@ -2,7 +2,7 @@ import base64
 import decimal
 import inspect
 import json
-import math
+import numpy as np
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler
 from inspect import Parameter
@@ -235,11 +235,13 @@ class RouteDescriber:
         return formatted_routes
 
 
-def calculate_points(rank, max_points=10000, min_points=1000, total_players=5000):
-    scale_factor = (max_points - min_points) / (math.log(2) - math.log(total_players + 1))
-    points = int(max_points - scale_factor * (math.log(rank + 1) - math.log(2)))
-
-    return max(min_points, points)
+def distribute_points(num_people=1000, max_points=10000):
+    log_values = np.log2(np.arange(1, num_people + 1))
+    scaled_points = (log_values - log_values.min()) / (log_values.max() - log_values.min())
+    scaled_points = scaled_points * max_points
+    rounded_points = np.round(scaled_points, 0)
+    rounded_points = map(lambda x: max_points - x, rounded_points)
+    return list(rounded_points)
 
 
 def get_trackmaster_limit():

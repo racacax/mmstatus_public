@@ -13,6 +13,8 @@ from src.utils import get_trackmaster_limit
 
 logger = create_logger("get_matches")
 
+MAX_RETRIES = 5
+
 
 class GetMatchesThread(AbstractThread):
     def __init__(self):
@@ -138,7 +140,8 @@ class GetMatchesThread(AbstractThread):
 
     def handle(self):
         while True:
-            if self.tries > 5:
+            if self.tries > MAX_RETRIES:
+                logger.info(f"Exceeding {MAX_RETRIES} tries. Skipping to next id.")
                 self.tries = 0
                 self.match_id += 1
             self.run_insert_matches_loop()

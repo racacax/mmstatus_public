@@ -9,7 +9,7 @@ from peewee import fn, Case, JOIN
 
 from models import Player, PlayerGame, Game, Season, Zone, PlayerSeason, Map
 from src.log_utils import create_logger
-from src.utils import CustomJSONEncoder, RANKS, calculate_points
+from src.utils import CustomJSONEncoder, RANKS, distribute_points
 from src.threads.abstract_thread import AbstractThread
 
 logger = create_logger("update_big_queries")
@@ -17,6 +17,7 @@ logger = create_logger("update_big_queries")
 
 def get_countries_leaderboard(season_id):
     total_players = 1000
+    points_repartition = distribute_points(max_points=10000, num_people=total_players)
     player_seasons = (
         PlayerSeason.select(
             Player.uuid,
@@ -37,7 +38,10 @@ def get_countries_leaderboard(season_id):
     objs = [o for o in player_seasons]
     countries = {}
     for o in objs:
-        computed_points = calculate_points(o["rank"], total_players=total_players)
+        if o["rank"] > len(points_repartition):
+            computed_points = 0
+        else:
+            computed_points = int(points_repartition[o["rank"] - 1])
         if not o["country"] in countries:
             countries[o["country"]] = {
                 "name": o["name"],
@@ -62,6 +66,7 @@ def get_countries_leaderboard(season_id):
 
 def get_clubs_leaderboard(season_id):
     total_players = 1000
+    points_repartition = distribute_points(max_points=10000, num_people=total_players)
     player_seasons = (
         PlayerSeason.select(
             Player.uuid,
@@ -78,7 +83,10 @@ def get_clubs_leaderboard(season_id):
     objs = [o for o in player_seasons]
     club_tags = {}
     for o in objs:
-        computed_points = calculate_points(o["rank"], total_players=total_players)
+        if o["rank"] > len(points_repartition):
+            computed_points = 0
+        else:
+            computed_points = int(points_repartition[o["rank"] - 1])
         if not o["club_tag"] in club_tags:
             club_tags[o["club_tag"]] = {"name": o["club_tag"], "points": 0, "count": 0}
         if club_tags[o["club_tag"]]["count"] < 10:
