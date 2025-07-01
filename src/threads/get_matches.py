@@ -99,7 +99,7 @@ class GetMatchesThread(AbstractThread):
                 if not match:
                     return False
                 name: str = match["name"]
-                if "Official 3v3" in name:
+                if "Official 3v3" in name or "2v2" in name:
                     tm_limit, participants, match_map = self.get_match_info(match)
                     logger.info(f"Creating match with id {match['id']}")
                     match_o = Game.create(
