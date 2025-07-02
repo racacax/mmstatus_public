@@ -120,7 +120,7 @@ class NadeoLive(NadeoAudience):
     def get_player_ranks(cls, account_ids: list) -> NadeoPlayerRanks:
         players = "&players[]=".join(account_ids)
         return get(
-            f"{cls.MEET_BASE_URL}matchmaking/2/leaderboard/players?players[]={players}",
+            f"{cls.MEET_BASE_URL}matchmaking/5/leaderboard/players?players[]={players}",
             cls.ACCESS_TOKEN,
         )
 
