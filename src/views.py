@@ -34,21 +34,20 @@ class APIViews(RouteDescriber):
     ):
         compute_matches_played = compute_matches_played == "true"
         players = (
-            Player.select(
+            Game.select(
                 Player.name,
                 Player.uuid,
                 Player.rank,
                 Player.points,
                 Player.club_tag,
-                Zone.name,
+                Zone.name.alias("country_name"),
                 Zone.country_alpha3,
                 Zone.file_name,
-                Game.id,
+                Game.id.alias("match_id"),
                 Game.time,
                 Game.is_finished,
             )
-            .join(Game, JOIN.LEFT_OUTER)
-            .switch(Player)
+            .join(Player, JOIN.LEFT_OUTER)
             .join(Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country")
             .order_by(Game.id.desc())
             .where(
@@ -59,9 +58,10 @@ class APIViews(RouteDescriber):
                 Player.points <= max_elo,
             )
             .paginate(page, 15)
+            .dicts()
         )
 
-        uuids = [p.uuid for p in players]
+        uuids = [p["uuid"] for p in players]
         now = datetime.now()
         if compute_matches_played:
             player_games = (
@@ -83,28 +83,32 @@ class APIViews(RouteDescriber):
         for p in players:
             data.append(
                 {
-                    "name": p.name,
-                    "uuid": str(p.uuid),
-                    "club_tag": p.club_tag,
-                    "country": p.country
+                    "name": p["name"],
+                    "uuid": str(p["uuid"]),
+                    "club_tag": p["club_tag"],
+                    "country": p["country_alpha3"]
                     and {
-                        "name": p.country.name,
-                        "file_name": p.country.file_name,
-                        "alpha3": p.country.country_alpha3,
+                        "name": p["country_name"],
+                        "file_name": p["file_name"],
+                        "alpha3": p["country_alpha3"],
                     },
-                    "rank": p.rank,
-                    "points": p.points,
-                    "games_last_24_hours": int(player_games.get(str(p.uuid), {"total_24_hours": 0})["total_24_hours"]),
-                    "games_last_week": int(player_games.get(str(p.uuid), {"total_1_week": 0})["total_1_week"]),
-                    "games_last_month": int(player_games.get(str(p.uuid), {"total_last_month": 0})["total_last_month"]),
-                    "last_active": p.last_match and p.last_match.time.timestamp() or 0,
-                    "last_game_finished": p.last_match and p.last_match.is_finished,
-                    "last_game_id": p.last_match and p.last_match_id or 0,
-                    "last_match": p.last_match
+                    "rank": p["rank"],
+                    "points": p["points"],
+                    "games_last_24_hours": int(
+                        player_games.get(str(p["uuid"]), {"total_24_hours": 0})["total_24_hours"]
+                    ),
+                    "games_last_week": int(player_games.get(str(p["uuid"]), {"total_1_week": 0})["total_1_week"]),
+                    "games_last_month": int(
+                        player_games.get(str(p["uuid"]), {"total_last_month": 0})["total_last_month"]
+                    ),
+                    "last_active": p["match_id"] and p["time"].timestamp() or 0,
+                    "last_game_finished": p["match_id"] and p["is_finished"],
+                    "last_game_id": p["match_id"] and p["match_id"] or 0,
+                    "last_match": p["match_id"]
                     and {
-                        "id": p.last_match_id,
-                        "date": p.last_match.time.timestamp(),
-                        "is_finished": p.last_match.is_finished,
+                        "id": p["match_id"],
+                        "date": p["time"].timestamp(),
+                        "is_finished": p["is_finished"],
                     },
                 }
             )
