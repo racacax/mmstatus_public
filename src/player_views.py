@@ -1,7 +1,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from peewee import Case, fn
+from peewee import Case, fn, JOIN
 
 from models import Player, PlayerGame, Game, Map, PlayerSeason, Season
 from src.utils import Option, route, RouteDescriber
