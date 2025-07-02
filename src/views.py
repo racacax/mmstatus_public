@@ -47,7 +47,7 @@ class APIViews(RouteDescriber):
                 Game.time,
                 Game.is_finished,
             )
-            .join(Game)
+            .join(Game, JOIN.LEFT_OUTER)
             .switch(Player)
             .join(Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country")
             .order_by(Game.id.desc())
@@ -63,7 +63,6 @@ class APIViews(RouteDescriber):
 
         uuids = [p.uuid for p in players]
         now = datetime.now()
-        print(compute_matches_played)
         if compute_matches_played:
             player_games = (
                 PlayerGame.select(
@@ -72,7 +71,7 @@ class APIViews(RouteDescriber):
                     fn.SUM(Case(None, [(Game.time > (now - timedelta(hours=24)), 1)], 0)).alias("total_24_hours"),
                     fn.SUM(Case(None, [(Game.time > (now - timedelta(days=7)), 1)], 0)).alias("total_1_week"),
                 )
-                .join(Game)
+                .join(Game, JOIN.LEFT_OUTER)
                 .where(PlayerGame.player_id << uuids, Game.time > now - timedelta(days=30))
                 .group_by(PlayerGame.player_id)
                 .dicts()
@@ -126,7 +125,7 @@ class APIViews(RouteDescriber):
     ):
         games = (
             Game.select(Game, Map)
-            .join(Map)
+            .join(Map, JOIN.LEFT_OUTER)
             .where(
                 Game.average_elo > -1,
                 Game.max_elo <= max_elo,

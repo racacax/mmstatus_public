@@ -85,9 +85,9 @@ class PlayerAPIViews(RouteDescriber):
                 lossrate,
                 mvprate,
             )
-            .join(PlayerGame)
-            .join(Game)
-            .join(Map)
+            .join(PlayerGame, JOIN.LEFT_OUTER)
+            .join(Game, JOIN.LEFT_OUTER)
+            .join(Map, JOIN.LEFT_OUTER)
             .where(
                 Player.uuid == player,
                 Game.time >= min_date,
@@ -140,7 +140,7 @@ class PlayerAPIViews(RouteDescriber):
 
         query = (
             PlayerGame.select(Game.time, PlayerGame.points_after_match)
-            .join(Game)
+            .join(Game, JOIN.LEFT_OUTER)
             .where(
                 PlayerGame.player_id == player,
                 PlayerGame.points_after_match != None,
@@ -189,7 +189,7 @@ class PlayerAPIViews(RouteDescriber):
 
         query = (
             PlayerGame.select(Game.time, PlayerGame.rank_after_match)
-            .join(Game)
+            .join(Game, JOIN.LEFT_OUTER)
             .where(
                 PlayerGame.player_id == player,
                 PlayerGame.rank_after_match != None,
@@ -319,9 +319,9 @@ class PlayerAPIViews(RouteDescriber):
                 total_losses.alias("total_losses"),
                 total_mvp.alias("total_mvp"),
             )
-            .join(Player)
-            .join(PlayerGame)
-            .join(Game)
+            .join(Player, JOIN.LEFT_OUTER)
+            .join(PlayerGame, JOIN.LEFT_OUTER)
+            .join(Game, JOIN.LEFT_OUTER)
             .where(
                 Player.uuid == player,
                 Game.time >= min_date,
@@ -338,9 +338,9 @@ class PlayerAPIViews(RouteDescriber):
                 # Get player points at the time of the filter
                 last_match = (
                     PlayerGame.select(PlayerGame.points_after_match)
-                    .join(Game)
+                    .join(Game, JOIN.LEFT_OUTER)
                     .switch(PlayerGame)
-                    .join(Player)
+                    .join(Player, JOIN.LEFT_OUTER)
                     .where(
                         Player.uuid == player,
                         Game.time >= selected_season.start_time,

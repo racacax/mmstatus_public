@@ -21,7 +21,7 @@ def parse_sql(data):
             if line.startswith("--"):
                 continue
             stmt += line.strip() + " "
-            if ";" in stmt:
+            if stmt.strip().endswith(";"):
                 stmts.append(stmt.strip())
                 stmt = ""
     return stmts
