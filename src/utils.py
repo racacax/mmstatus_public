@@ -61,97 +61,19 @@ def get_uuid_from_login(login: str):
 
 
 RANKS = [
-    {
-        "name": "Trackmaster",
-        "image": "TM.png",
-        "key": "tm",
-        "min_elo": 4000,
-        "min_rank": 10,
-    },
-    {
-        "name": "Master III",
-        "image": "M3.png",
-        "key": "m3",
-        "min_elo": 3600,
-        "min_rank": None,
-    },
-    {
-        "name": "Master II",
-        "image": "M2.png",
-        "key": "m2",
-        "min_elo": 3300,
-        "min_rank": None,
-    },
-    {
-        "name": "Master I",
-        "image": "M1.png",
-        "key": "m1",
-        "min_elo": 3000,
-        "min_rank": None,
-    },
-    {
-        "name": "Gold III",
-        "image": "G3.png",
-        "key": "g3",
-        "min_elo": 2600,
-        "min_rank": None,
-    },
-    {
-        "name": "Gold II",
-        "image": "G2.png",
-        "key": "g2",
-        "min_elo": 2300,
-        "min_rank": None,
-    },
-    {
-        "name": "Gold I",
-        "image": "G1.png",
-        "key": "g1",
-        "min_elo": 2000,
-        "min_rank": None,
-    },
-    {
-        "name": "Silver III",
-        "image": "S3.png",
-        "key": "s3",
-        "min_elo": 1600,
-        "min_rank": None,
-    },
-    {
-        "name": "Silver II",
-        "image": "S2.png",
-        "key": "s2",
-        "min_elo": 1300,
-        "min_rank": None,
-    },
-    {
-        "name": "Silver I",
-        "image": "S1.png",
-        "key": "s1",
-        "min_elo": 1000,
-        "min_rank": None,
-    },
-    {
-        "name": "Bronze III",
-        "image": "B3.png",
-        "key": "b3",
-        "min_elo": 600,
-        "min_rank": None,
-    },
-    {
-        "name": "Bronze II",
-        "image": "B2.png",
-        "key": "b2",
-        "min_elo": 300,
-        "min_rank": None,
-    },
-    {
-        "name": "Bronze I",
-        "image": "B1.png",
-        "key": "b1",
-        "min_elo": 0,
-        "min_rank": None,
-    },
+    {"name": "Trackmaster", "image": "TM.png", "key": "tm", "min_elo": 4000, "min_rank": 10, "id": 12},
+    {"name": "Master III", "image": "M3.png", "key": "m3", "min_elo": 3600, "min_rank": None, "id": 11},
+    {"name": "Master II", "image": "M2.png", "key": "m2", "min_elo": 3300, "min_rank": None, "id": 10},
+    {"name": "Master I", "image": "M1.png", "key": "m1", "min_elo": 3000, "min_rank": None, "id": 9},
+    {"name": "Gold III", "image": "G3.png", "key": "g3", "min_elo": 2600, "min_rank": None, "id": 8},
+    {"name": "Gold II", "image": "G2.png", "key": "g2", "min_elo": 2300, "min_rank": None, "id": 7},
+    {"name": "Gold I", "image": "G1.png", "key": "g1", "min_elo": 2000, "min_rank": None, "id": 6},
+    {"name": "Silver III", "image": "S3.png", "key": "s3", "min_elo": 1600, "min_rank": None, "id": 5},
+    {"name": "Silver II", "image": "S2.png", "key": "s2", "min_elo": 1300, "min_rank": None, "id": 4},
+    {"name": "Silver I", "image": "S1.png", "key": "s1", "min_elo": 1000, "min_rank": None, "id": 3},
+    {"name": "Bronze III", "image": "B3.png", "key": "b3", "min_elo": 600, "min_rank": None, "id": 2},
+    {"name": "Bronze II", "image": "B2.png", "key": "b2", "min_elo": 300, "min_rank": None, "id": 1},
+    {"name": "Bronze I", "image": "B1.png", "key": "b1", "min_elo": 0, "min_rank": None, "id": 0},
 ]
 
 
@@ -206,6 +128,12 @@ class Option:
 
 
 POINTS_TYPE = [str(r["min_elo"]) for r in RANKS]
+STATS_PERIODS = {
+    "HOURLY": 0,
+    "DAILY": 3,
+    "WEEKLY": 1,
+    "MONTHLY": 2,
+}
 
 
 def route(name, description, summary=None, deprecated=False):
