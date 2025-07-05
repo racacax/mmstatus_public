@@ -368,13 +368,9 @@ class APIViews(RouteDescriber):
                 RANKS[i]["min_rank"] is not None,
             )
 
-        g = (
-            Game.select(*conditions)
-            .where(
-                Game.time >= min_date,
-                Game.time <= max_date,
-            )
-            .order_by(Game.time.desc())
+        g = Game.select(*conditions).where(
+            Game.time >= min_date,
+            Game.time <= max_date,
         )
 
         g = g.dicts()[0]
