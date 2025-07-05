@@ -31,17 +31,17 @@ def migrate_forward(op, old_orm, new_orm):
     if os.environ.get("ENVIRONMENT") != "test":
         min_max = Game.select(fn.MIN(Game.time).alias('min'), fn.MAX(Game.time).alias('max')).dicts().get_or_none()
 
-        #HOURLY
-        print('Perform hourly stats')
-        get_or_create_all(min_max['min'], min_max['max'], "HOURLY")
-        #DAILY
-        print('Perform daily stats')
-        get_or_create_all(min_max['min'], min_max['max'], "DAILY")
-        #WEEKLY
-        print('Perform weekly stats')
-        get_or_create_all(min_max['min'], min_max['max'], 'WEEKLY')
         #MONTHLY
         print('Perform monthly stats')
         get_or_create_all(min_max['min'], min_max['max'], 'MONTHLY')
+        #WEEKLY
+        print('Perform weekly stats')
+        get_or_create_all(min_max['min'], min_max['max'], 'WEEKLY')
+        #DAILY
+        print('Perform daily stats')
+        get_or_create_all(min_max['min'], min_max['max'], "DAILY")
+        #HOURLY
+        print('Perform hourly stats')
+        get_or_create_all(min_max['min'], min_max['max'], "HOURLY")
 def migrate_backward(op, old_orm, new_orm):
     pass
