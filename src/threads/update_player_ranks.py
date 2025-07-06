@@ -2,7 +2,9 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from models import Player, PlayerGame, Season, PlayerSeason
+from peewee import JOIN
+
+from models import Player, PlayerGame, Season, PlayerSeason, Game
 from src.log_utils import create_logger
 from src.services import NadeoLive
 from src.threads.abstract_thread import AbstractThread
@@ -34,10 +36,20 @@ class UpdatePlayerRanksThread(AbstractThread):
             ps.save()
             if p.last_match and p.last_match.is_finished:
                 pg = PlayerGame.get(game=p.last_match, player=p)
-                if pg.points_after_match is None:
-                    pg.points_after_match = p.points
-                    pg.rank_after_match = p.rank
-                    pg.save()
+            else:
+                # If new match already started, need to look for previous matches
+                pg = (
+                    PlayerGame.select(PlayerGame, Game)
+                    .join(Game, JOIN.LEFT_OUTER)
+                    .where(Game.is_finished == True, PlayerGame.player_id == p.uuid)
+                    .order_by(PlayerGame.id.desc())
+                    .get_or_none()
+                )
+
+            if pg and pg.points_after_match is None:
+                pg.points_after_match = p.points
+                pg.rank_after_match = p.rank
+                pg.save()
         except Exception as e:
             logger.error(
                 "Error while updating player rank",
