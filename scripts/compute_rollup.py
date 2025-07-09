@@ -4,10 +4,9 @@ from datetime import datetime, timedelta
 from peewee import fn
 
 from models import Game
-from src.threads.update_stats_per_rank import get_last_time_range, get_stats_obj, UpdateStatsPerRank
+from src.threads.update_stats_per_rank import get_last_time_range, UpdateStatsPerRank
 from src.utils import STATS_PERIODS
 
-snapshot = Snapshot()
 
 def get_or_create_all(min_date, max_date, period):
     cursor: datetime = min_date
@@ -24,7 +23,7 @@ def get_or_create_all(min_date, max_date, period):
             cursor += timedelta(days=7)
         elif period == 'MONTHLY':
             cursor = cursor.replace(day=7) + timedelta(days=30)
-def migrate_forward(op, old_orm, new_orm):
+def migrate_forward():
     """
     Migration to compute all previous rollup stats.
     """
@@ -43,5 +42,5 @@ def migrate_forward(op, old_orm, new_orm):
         #HOURLY
         print('Perform hourly stats')
         get_or_create_all(min_max['min'], min_max['max'], "HOURLY")
-def migrate_backward(op, old_orm, new_orm):
-    pass
+
+migrate_forward()
