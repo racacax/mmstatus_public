@@ -29,7 +29,7 @@ class Game(BaseModel):
     min_elo = IntegerField(default=-1, index=True)
     average_elo = IntegerField(default=-1, index=True)
     max_elo = IntegerField(default=-1, index=True)
-    time = DateTimeField(default=datetime.datetime.fromtimestamp(0))
+    time = DateTimeField(default=datetime.datetime.fromtimestamp(0), index=True)
     is_finished = BooleanField(default=False)
     trackmaster_limit = IntegerField(default=999999)
     rounds = IntegerField(null=True)
