@@ -9,6 +9,7 @@
     "models.PlayerGame",
     "models.Zone",
     "models.Season",
-    "models.PlayerSeason"
+    "models.PlayerSeason",
+    "models.RankStatRollup"
   ]
 }

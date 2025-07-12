@@ -29,7 +29,7 @@ class Game(BaseModel):
     min_elo = IntegerField(default=-1, index=True)
     average_elo = IntegerField(default=-1, index=True)
     max_elo = IntegerField(default=-1, index=True)
-    time = DateTimeField(default=datetime.datetime.fromtimestamp(0))
+    time = DateTimeField(default=datetime.datetime.fromtimestamp(0), index=True)
     is_finished = BooleanField(default=False)
     trackmaster_limit = IntegerField(default=999999)
     rounds = IntegerField(null=True)
@@ -94,3 +94,12 @@ class PlayerSeason(BaseModel):
     player = ForeignKeyField(Player, backref="player_seasons")
     points = IntegerField(default=0, index=True)
     rank = IntegerField(default=99999, index=True)
+
+
+class RankStatRollup(BaseModel):
+    start_time = DateTimeField(index=True)
+    end_time = DateTimeField(index=True)
+    period = IntegerField(default=0, index=True)
+    rank = IntegerField(default=0, index=True)
+    count = IntegerField(default=0)
+    last_game_time = DateTimeField(default=datetime.datetime.fromtimestamp(0), null=True, index=True)
