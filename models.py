@@ -102,4 +102,4 @@ class RankStatRollup(BaseModel):
     period = IntegerField(default=0, index=True)
     rank = IntegerField(default=0, index=True)
     count = IntegerField(default=0)
-    last_game_time = DateTimeField(default=datetime.datetime.fromtimestamp(0), null=True)
+    last_game_time = DateTimeField(default=datetime.datetime.fromtimestamp(0), null=True, index=True)
