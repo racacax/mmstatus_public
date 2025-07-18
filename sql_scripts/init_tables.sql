@@ -56,7 +56,14 @@ INSERT INTO `migratehistory` (`id`, `name`, `migrated`) VALUES
 (21, '0021_migration_202405041124', '2024-05-04 09:29:41'),
 (22, '0022_migration_202405041356', '2024-05-04 12:56:49'),
 (23, '0023_migration_202405121707', '2024-05-12 15:18:56'),
-(24, '0024_migration_202410082131', '2024-10-09 06:10:39');
+(24, '0024_migration_202410082131', '2024-10-09 06:10:39'),
+(25, '0025_migration_202412271346', '2024-12-27 13:36:02'),
+(26, '0026_migration_202507050847', '2025-07-05 08:31:22'),
+(27, '0027_migration_202507050855', '2025-07-05 08:31:40'),
+(28, '0028_migration_202507050918', '2025-07-05 08:31:45'),
+(29, '0029_migration_202507050944', '2025-07-05 08:31:48'),
+(31, '0030_migration_202507092145', '2025-07-09 19:47:41'),
+(32, '0031_migration_202507121050', '2025-07-12 10:13:41');
 
 CREATE TABLE `player` (
   `uuid` varchar(40) NOT NULL,
@@ -91,6 +98,16 @@ CREATE TABLE `playerseason` (
   `rank` int(11) NOT NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
 
+CREATE TABLE `rankstatrollup` (
+  `id` int(11) NOT NULL,
+  `start_time` datetime NOT NULL,
+  `end_time` datetime NOT NULL,
+  `period` int(11) NOT NULL,
+  `rank` int(11) NOT NULL,
+  `count` int(11) NOT NULL,
+  `last_game_time` datetime DEFAULT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci;
+
 CREATE TABLE `season` (
   `id` int(11) NOT NULL,
   `name` varchar(32) NOT NULL,
@@ -114,7 +131,8 @@ ALTER TABLE `game`
   ADD KEY `game_map_id` (`map_id`),
   ADD KEY `game_max_elo` (`max_elo`),
   ADD KEY `game_average_elo` (`average_elo`),
-  ADD KEY `game_min_elo` (`min_elo`);
+  ADD KEY `game_min_elo` (`min_elo`),
+  ADD KEY `game_time` (`time`);
 
 ALTER TABLE `map`
   ADD PRIMARY KEY (`uid`);
@@ -142,6 +160,14 @@ ALTER TABLE `playerseason`
   ADD KEY `playerseason_points` (`points`),
   ADD KEY `playerseason_rank` (`rank`);
 
+ALTER TABLE `rankstatrollup`
+  ADD PRIMARY KEY (`id`),
+  ADD KEY `rankstatrollup_rank` (`rank`),
+  ADD KEY `rankstatrollup_period` (`period`),
+  ADD KEY `rankstatrollup_start_time` (`start_time`),
+  ADD KEY `rankstatrollup_end_time` (`end_time`),
+  ADD KEY `rankstatrollup_last_game_time` (`last_game_time`);
+
 ALTER TABLE `season`
   ADD PRIMARY KEY (`id`);
 
@@ -154,12 +180,15 @@ ALTER TABLE `game`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 ALTER TABLE `migratehistory`
-  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=25;
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT, AUTO_INCREMENT=33;
 
 ALTER TABLE `playergame`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 ALTER TABLE `playerseason`
+  MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
+
+ALTER TABLE `rankstatrollup`
   MODIFY `id` int(11) NOT NULL AUTO_INCREMENT;
 
 ALTER TABLE `season`
