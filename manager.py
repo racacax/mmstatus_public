@@ -10,6 +10,7 @@ from src.threads.update_maps import UpdateMapsThread
 from src.threads.update_match_elo import UpdateMatchEloThread
 from src.threads.update_matches import UpdateMatchesThread
 from src.threads.update_player_countries import UpdatePlayerCountriesThread
+from src.threads.update_stats_per_rank import UpdateStatsPerRank
 from src.threads.update_top_player_positions import UpdateTopPlayersPositionThread
 from src.threads.update_player_ranks import UpdatePlayerRanksThread
 from src.threads.update_player_zones import UpdatePlayerZonesThread
@@ -29,6 +30,7 @@ if ENABLE_THREADS:
         UpdateMatchEloThread,
         UpdateTopPlayersPositionThread,
         UpdateMainNadeoTokenThread,
+        UpdateStatsPerRank,
     ]
     if ENABLE_OAUTH:
         threads.append(UpdatePlayersThread)

@@ -39,6 +39,7 @@ def pytest_sessionstart(session):
     conn.cursor().execute("DROP DATABASE IF EXISTS`" + TEST_DB + "`;")
     conn.cursor().execute("CREATE DATABASE `" + TEST_DB + "` COLLATE utf8mb4_general_ci")
     conn.close()
+    print(os.popen("python scripts/run_sql.py init_tables").read())
     print(os.popen("pem migrate").read())
 
 
