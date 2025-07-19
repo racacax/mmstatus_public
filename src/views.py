@@ -1,5 +1,4 @@
 import json
-from copy import copy
 from datetime import datetime, timedelta
 from inspect import signature
 from uuid import UUID
@@ -8,7 +7,8 @@ from peewee import Case, fn, JOIN
 
 from models import Player, PlayerGame, Game, Map, Season, Zone
 from src.player_views import PlayerAPIViews
-from src.utils import Option, format_type, POINTS_TYPE, route, RouteDescriber, RANKS, DateUtils
+from src.utils import Option, format_type, POINTS_TYPE, route, RouteDescriber, RANKS
+from src.view_utils.status import get_rollup_stats, compute_remaining_stats, get_merged_stats
 
 
 class APIViews(RouteDescriber):
@@ -342,52 +342,15 @@ class APIViews(RouteDescriber):
         min_date = datetime.fromtimestamp(min_date or (datetime.now().timestamp() - 3600))
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
 
-        rollup_stats, remaining_condition = DateUtils.get_rollup_stats(min_date, max_date)
+        stats, remaining_condition = get_rollup_stats(min_date, max_date)
         if remaining_condition:
+            remaining_stats = compute_remaining_stats(remaining_condition)
+            stats = get_merged_stats(stats, remaining_stats)
 
-            def get_condition(min_elo, max_elo, alias, is_tm=False):
-                if is_tm:
-                    condition = Game.trackmaster_limit <= max_elo
-                else:
-                    condition = Game.trackmaster_limit >= min_elo
-                condition = (Game.min_elo <= max_elo) & (Game.max_elo >= min_elo) & condition
-                return [
-                    fn.SUM(Case(None, [(condition, 1)], 0)).alias(alias),
-                    fn.MAX(Case(None, [(condition, Game.time)], None)).alias(alias + "_date"),
-                ]
-
-            conditions = []
-            for i in range(len(RANKS) - 1, -1, -1):
-                if i == 0:
-                    max_elo = 999999
-                else:
-                    max_elo = RANKS[i - 1]["min_elo"] - 1
-                conditions = conditions + get_condition(
-                    RANKS[i]["min_elo"],
-                    max_elo,
-                    f'r{RANKS[i]["id"]}',
-                    RANKS[i]["min_rank"] is not None,
-                )
-
-            g = Game.select(*conditions).where(remaining_condition)
-            g = g.dicts()[0]
-            if g and rollup_stats:
-                for i in range(len(rollup_stats)):
-                    key = f'r{rollup_stats[i]["rank"]}'
-                    if key in g:
-                        rollup_stats[i]["count"] += g[key] or 0
-                        if f"{key}_date" in g and g[f"{key}_date"]:
-                            rollup_stats[i]["last_game_time"] = max(g[f"{key}_date"], rollup_stats[i]["last_game_time"])
-            elif g:
-                rollup_stats = [
-                    {"count": g.get(f'r{r["id"]}'), "last_game_time": g.get(f'r{r["id"]}_date'), "rank": r["id"]}
-                    for r in RANKS
-                ]
-
-        ranks = copy(RANKS)
-        ranks.reverse()
-        final_stats = {stat["rank"]: stat for stat in rollup_stats}
+        ranks = RANKS[::-1]
+        final_stats = {stat["rank"]: stat for stat in stats}
         ranks = {r["id"]: r["key"] for r in ranks}
+        # use key instead of id for returned payload (e.g. m3 will be used instead of 11 for Master III)
         return 200, {
             k: {
                 "last_time": final_stats.get(id)

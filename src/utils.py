@@ -10,9 +10,8 @@ from typing import Union
 from uuid import UUID
 
 import requests
-from peewee import fn
 
-from models import Player, RankStatRollup, Game
+from models import Player
 
 
 class CustomJSONEncoder(json.JSONEncoder):
@@ -210,11 +209,15 @@ class DateUtils:
             new_cursor_with_delta = new_cursor - timedelta(seconds=1)
             if new_cursor_with_delta > max_date:
                 if full_range:
-                    full_range[1] = new_cursor_with_delta
+                    full_range[1] = cursor - timedelta(seconds=1)
                 remaining_ranges.append([cursor, max_date])
-            elif new_cursor_with_delta == max_date:
+            elif new_cursor_with_delta == max_date or new_cursor == max_date:
                 if full_range:
                     full_range[1] = new_cursor_with_delta
+                else:
+                    full_range = [cursor, new_cursor_with_delta]
+                    if cursor != min_date:
+                        remaining_ranges.append([min_date, cursor - timedelta(seconds=1)])
             elif not full_range:
                 full_range = [cursor, None]
                 if min_date != cursor:
@@ -290,98 +293,3 @@ class DateUtils:
         if additional_condition and condition is not None:
             condition &= additional_condition
         return condition
-
-    @classmethod
-    def get_rollup_stats(cls, min_date: datetime, max_date: datetime):
-        monthly_range, remaining_monthly_ranges = cls.divide_range_by_full_months(min_date, max_date)
-
-        weekly_ranges = []
-        remaining_weekly_ranges = []
-        for r in remaining_monthly_ranges:
-            weekly_range, remaining_weekly_range = cls.divide_range_by_full_weeks(r[0], r[1])
-            if weekly_range:
-                weekly_ranges.append(weekly_range)
-            if remaining_weekly_range:
-                remaining_weekly_ranges += remaining_weekly_range
-
-        daily_ranges = []
-        remaining_daily_ranges = []
-        for r in remaining_weekly_ranges:
-            daily_range, remaining_daily_range = cls.divide_range_by_full_days(r[0], r[1])
-            if daily_range:
-                daily_ranges.append(daily_range)
-            if remaining_daily_range:
-                remaining_daily_ranges += remaining_daily_range
-
-        hourly_ranges = []
-        remaining_hourly_ranges = []
-        for r in remaining_daily_ranges:
-            hourly_range, remaining_hourly_range = cls.divide_range_by_full_hours(r[0], r[1])
-            if hourly_range:
-                hourly_ranges.append(hourly_range)
-            if remaining_hourly_range:
-                remaining_hourly_ranges += remaining_hourly_range
-
-        if len(remaining_hourly_ranges):
-            direct_compute_condition = cls.format_ranges_to_sql(Game.time, Game.time, remaining_hourly_ranges or [])
-        else:
-            direct_compute_condition = None
-        conditions = [
-            (
-                cls.format_ranges_to_sql(
-                    RankStatRollup.start_time,
-                    RankStatRollup.end_time,
-                    monthly_range and [monthly_range] or [],
-                    RankStatRollup.period == STATS_PERIODS["MONTHLY"],
-                )
-            ),
-            (
-                cls.format_ranges_to_sql(
-                    RankStatRollup.start_time,
-                    RankStatRollup.end_time,
-                    weekly_ranges or [],
-                    RankStatRollup.period == STATS_PERIODS["WEEKLY"],
-                )
-            ),
-            (
-                cls.format_ranges_to_sql(
-                    RankStatRollup.start_time,
-                    RankStatRollup.end_time,
-                    daily_ranges or [],
-                    RankStatRollup.period == STATS_PERIODS["DAILY"],
-                )
-            ),
-            (
-                cls.format_ranges_to_sql(
-                    RankStatRollup.start_time,
-                    RankStatRollup.end_time,
-                    hourly_ranges or [],
-                    RankStatRollup.period == STATS_PERIODS["HOURLY"],
-                )
-            ),
-        ]
-
-        conditions = list(filter(lambda con: con is not None, conditions))
-        if len(conditions):
-            final_condition = None
-            for c in conditions:
-                if final_condition is None:
-                    final_condition = c
-                else:
-                    final_condition |= c
-            rollup_stats = (
-                RankStatRollup.select(
-                    fn.MAX(RankStatRollup.end_time),
-                    fn.SUM(RankStatRollup.count),
-                    fn.MAX(RankStatRollup.last_game_time),
-                    RankStatRollup.rank,
-                )
-                .where(final_condition)
-                .group_by(RankStatRollup.rank)
-                .dicts()
-            )
-            rollup_stats = [stat for stat in rollup_stats]
-        else:
-            rollup_stats = None
-
-        return rollup_stats, direct_compute_condition

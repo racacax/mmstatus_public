@@ -22,9 +22,8 @@ def get_last_time_range(period: str, base_time=None):
         end_time = base_time.replace(hour=23, minute=59, second=59, microsecond=0) - timedelta(days=1)
         start_time = end_time.replace(hour=0, minute=0, second=0)
     elif period == "WEEKLY":
-        end_time = (base_time - timedelta(days=((base_time.isoweekday() + 1) % 7))).replace(
-            hour=23, minute=59, second=59, microsecond=0
-        )
+        end_time = (base_time - timedelta(days=1)).replace(hour=23, minute=59, second=59, microsecond=0)
+        end_time -= timedelta(days=((end_time.isoweekday()) % 7))
         start_time = end_time.replace(hour=0, minute=0, second=0, microsecond=0) - timedelta(days=6)
     elif period == "MONTHLY":
         end_time = base_time.replace(day=1, hour=0, minute=0, second=0, microsecond=0) - timedelta(seconds=1)
