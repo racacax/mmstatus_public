@@ -50,7 +50,10 @@ class UpdatePlayersThread(AbstractThread):
         logger.info("Fetch first 50 players with name update older than 24 hours")
         players = (
             Player.select(Player)
-            .where(Player.last_name_update < (datetime.now() - timedelta(hours=24)))
+            .where(
+                (Player.last_name_update < (datetime.now() - timedelta(hours=24)))
+                & ((Player.points > 0) | (Player.last_name_update == datetime.fromtimestamp(0)))
+            )
             .order_by(Player.last_name_update.asc())
             .paginate(1, MAX_PLAYERS)
         )
