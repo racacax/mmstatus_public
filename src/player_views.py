@@ -46,12 +46,14 @@ class PlayerAPIViews(RouteDescriber):
         min_date = datetime.fromtimestamp(min_date)
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
         uid = Map.uid.alias("map_uid")
-        wins = fn.SUM(PlayerGame.is_win)
+        finished = Game.is_finished == True
+        wins = fn.SUM(Case(None, [((finished & (PlayerGame.is_win == True)), 1)], 0))
+        losses = fn.SUM(Case(None, [((finished & (PlayerGame.is_win == False)), 1)], 0))
         mvps = fn.SUM(PlayerGame.is_mvp)
-        losses = fn.SUM(Case(None, [((PlayerGame.is_win == False), 1)], 0))
         played = fn.COUNT(Map.uid)
-        winrate = (wins * 100 / played).alias("winrate")
-        lossrate = (losses * 100 / played).alias("lossrate")
+        finished_count = fn.NULLIF(fn.SUM(Case(None, [(finished, 1)], 0)), 0)
+        winrate = (wins * 100 / finished_count).alias("winrate")
+        lossrate = (losses * 100 / finished_count).alias("lossrate")
         mvprate = (mvps * 100 / played).alias("mvprate")
         if order_by == "losses":
             order_by = losses
@@ -295,16 +297,22 @@ class PlayerAPIViews(RouteDescriber):
             max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
             selected_season = Season.filter(Season.start_time <= min_date, Season.end_time >= max_date).get_or_none()
         elif season:
-            selected_season = Season.get(id=season)
+            if season == -1:
+                selected_season = Season.get_current_season()
+            else:
+                selected_season = Season.get_or_none(id=season)
+            if not selected_season:
+                return 404, {"message": "Cannot retrieve any season with these filters"}
             min_date = selected_season.start_time
             max_date = selected_season.end_time
 
         if not selected_season:
             return 404, {"message": "Cannot retrieve any season with these filters"}
 
+        finished = Game.is_finished == True
         total_played = fn.COUNT(PlayerGame.id)
-        total_wins = fn.SUM(PlayerGame.is_win)
-        total_losses = fn.SUM(Case(None, [((PlayerGame.is_win == False), 1)], 0))
+        total_wins = fn.SUM(Case(None, [((finished & (PlayerGame.is_win == True)), 1)], 0))
+        total_losses = fn.SUM(Case(None, [((finished & (PlayerGame.is_win == False)), 1)], 0))
         total_mvp = fn.SUM(PlayerGame.is_mvp)
 
         query = (

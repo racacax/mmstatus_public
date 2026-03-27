@@ -9,10 +9,10 @@ load_dotenv()
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
 NADEO_FILE_PATH = os.path.join(os.path.dirname(__file__), "tk.txt")
-UBISOFT_OAUTH_REFRESH_TOKEN = open(NADEO_FILE_PATH, "r").read()
+UBISOFT_OAUTH_REFRESH_TOKEN = open(NADEO_FILE_PATH, "r").read().strip()
 START_ID = int(os.getenv("START_ID", default=8958871))
 NADEO2_FILE_PATH = os.path.join(os.path.dirname(__file__), "nd_tk.txt")
-NADEO_REFRESH_TOKEN = open(NADEO2_FILE_PATH, "r").read()
+NADEO_REFRESH_TOKEN = open(NADEO2_FILE_PATH, "r").read().strip()
 ENABLE_OAUTH = os.getenv("ENABLE_OAUTH", "True") == "True"
 ENABLE_THREADS = os.getenv("ENABLE_THREADS", "True") == "True"
 DATABASE_NAME = os.getenv("DATABASE_NAME", "mmstatus")

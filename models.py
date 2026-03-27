@@ -86,7 +86,7 @@ class Season(BaseModel):
     @classmethod
     def get_current_season(cls):
         now = datetime.datetime.now()
-        return cls.select().where(Season.start_time <= now, Season.end_time >= now)[0]
+        return cls.select().where(Season.start_time <= now, Season.end_time >= now).get_or_none()
 
 
 class PlayerSeason(BaseModel):

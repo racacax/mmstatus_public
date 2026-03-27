@@ -155,7 +155,7 @@ class NadeoOauth(NadeoAudience):
         return requests.post(
             f"{cls.BASE_URL}{path}",
             data=data,
-            headers={"Authorization": "Bearer" + cls.ACCESS_TOKEN},
+            headers={"Authorization": "Bearer " + cls.ACCESS_TOKEN},
         ).json()
 
     @classmethod

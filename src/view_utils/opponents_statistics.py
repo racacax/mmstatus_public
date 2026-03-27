@@ -7,6 +7,7 @@ from models import Player, PlayerGame, Game, Zone
 
 
 def get_player_counts(Opponent, OpponentGame):
+    finished = Game.is_finished == True
     obj = {
         "total_played": fn.COUNT(Opponent.uuid),
         "total_played_against": fn.SUM(Case(None, [((PlayerGame.is_win != OpponentGame.is_win), 1)], 0)),
@@ -14,28 +15,28 @@ def get_player_counts(Opponent, OpponentGame):
         "total_games_lost_against": fn.SUM(
             Case(
                 None,
-                [(((PlayerGame.is_win == False) & (OpponentGame.is_win == True)), 1)],
+                [(((finished) & (PlayerGame.is_win == False) & (OpponentGame.is_win == True)), 1)],
                 0,
             )
         ),
         "total_games_won_against": fn.SUM(
             Case(
                 None,
-                [(((OpponentGame.is_win == False) & (PlayerGame.is_win == True)), 1)],
+                [(((finished) & (OpponentGame.is_win == False) & (PlayerGame.is_win == True)), 1)],
                 0,
             )
         ),
         "total_games_lost_along": fn.SUM(
             Case(
                 None,
-                [(((PlayerGame.is_win == False) & (OpponentGame.is_win == False)), 1)],
+                [(((finished) & (PlayerGame.is_win == False) & (OpponentGame.is_win == False)), 1)],
                 0,
             )
         ),
         "total_games_won_along": fn.SUM(
             Case(
                 None,
-                [(((OpponentGame.is_win == True) & (PlayerGame.is_win == True)), 1)],
+                [(((finished) & (OpponentGame.is_win == True) & (PlayerGame.is_win == True)), 1)],
                 0,
             )
         ),

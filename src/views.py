@@ -472,7 +472,7 @@ class APIViews(RouteDescriber):
             season = Season.get_current_season().id
 
         if order_by not in ["played", "losses", "wins", "mvps"]:
-            return
+            return 404, {"message": f"'{order_by}' is not a valid order_by value."}
         f = open("cache/get_players_matches_" + order_by + "_" + str(season) + ".txt", "r")
         content = f.read()
         f.close()
