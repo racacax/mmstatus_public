@@ -15,11 +15,22 @@ from src.threads.update_top_player_positions import UpdateTopPlayersPositionThre
 from src.threads.update_player_ranks import UpdatePlayerRanksThread
 from src.threads.update_player_zones import UpdatePlayerZonesThread
 from src.threads.update_players import UpdatePlayersThread
+from src.log_utils import create_logger
 
 from settings import ENABLE_OAUTH, ENABLE_THREADS
 
+logger = create_logger("manager")
+
+
+def start_thread(cls):
+    instance = cls()
+    t = threading.Thread(target=instance.run)
+    t.start()
+    return t
+
+
 if ENABLE_THREADS:
-    threads = [
+    thread_classes = [
         UpdateBigQueriesThread,
         GetMatchesThread,
         UpdateMapsThread,
@@ -33,9 +44,16 @@ if ENABLE_THREADS:
         UpdateStatsPerRank,
     ]
     if ENABLE_OAUTH:
-        threads.append(UpdatePlayersThread)
-    for thread in threads:
-        threading.Thread(target=thread().handle, args=[]).start()
+        thread_classes.append(UpdatePlayersThread)
 
-while True:
-    time.sleep(1)
+    active_threads = {cls: start_thread(cls) for cls in thread_classes}
+
+    while True:
+        time.sleep(60)
+        for cls, t in list(active_threads.items()):
+            if not t.is_alive():
+                logger.warning(f"Thread {cls.__name__} has crashed. Restarting...")
+                active_threads[cls] = start_thread(cls)
+else:
+    while True:
+        time.sleep(1)
