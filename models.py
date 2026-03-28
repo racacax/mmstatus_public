@@ -36,7 +36,6 @@ class Game(BaseModel):
 
     class Meta:
         ordering = ("-id",)
-        indexes = ((("id",), True),)  # Crée un index UNIQUE sur le champ id
 
 
 class Zone(BaseModel):
