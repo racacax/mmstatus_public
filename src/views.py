@@ -132,7 +132,7 @@ class APIViews(RouteDescriber):
     ):
         games = (
             Game.select(Game, Map)
-            .join(Map)
+            .join(Map, JOIN.LEFT_OUTER)
             .where(
                 Game.average_elo > -1,
                 Game.max_elo <= max_elo,
