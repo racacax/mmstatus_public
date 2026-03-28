@@ -266,6 +266,52 @@ class PlayerAPIViews(RouteDescriber):
 
     @staticmethod
     @route(
+        name="activity_heatmap",
+        summary="Activity heatmap",
+        description="Returns match counts grouped by day of week and hour of day for a selected player. "
+        "day: 0=Sunday … 6=Saturday. hour: 0-23 (server local time).",
+    )
+    def get_activity_heatmap(
+        player: Option(UUID, description="Unique UUID identifying a player") = UUID(
+            "84078894-bae1-4399-b869-7b42a5240f02"
+        ),
+        min_date: Option(
+            int,
+            description="Unix timestamp representing the start date of filtered data",
+        ) = 0,
+        max_date: Option(
+            int,
+            description="Unix timestamp representing the end date of filtered data",
+            formatted_default="<current timestamp>",
+        ) = None,
+    ):
+        min_date = datetime.fromtimestamp(min_date)
+        max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
+
+        day = (fn.DAYOFWEEK(Game.time) - 1).alias("day")
+        hour = fn.HOUR(Game.time).alias("hour")
+        count = fn.COUNT(PlayerGame.id).alias("count")
+
+        query = (
+            PlayerGame.select(day, hour, count)
+            .join(Game, JOIN.LEFT_OUTER)
+            .where(
+                PlayerGame.player_id == player,
+                Game.time >= min_date,
+                Game.time <= max_date,
+            )
+            .group_by(fn.DAYOFWEEK(Game.time), fn.HOUR(Game.time))
+            .order_by(fn.DAYOFWEEK(Game.time), fn.HOUR(Game.time))
+            .dicts()
+        )
+
+        return 200, {
+            "results": [{"day": r["day"], "hour": r["hour"], "count": r["count"]} for r in query],
+            "player": player,
+        }
+
+    @staticmethod
+    @route(
         name="statistics",
         summary="General statistics",
         description="Returns basic statistics on a selected player (points, position, matches played, ...)",

@@ -475,3 +475,203 @@ class TestGetOpponentsStatistics:
         assert row["total_games_won_along"] == 0
         assert row["total_games_lost_along"] == 0
         assert row["total_played"] == 4
+
+
+# ── get_activity_heatmap ──────────────────────────────────────────────────────
+
+# Known weekdays used across heatmap tests (all in January 2024):
+#   2024-01-06 = Saturday  → day 6   (DAYOFWEEK=7, minus 1)
+#   2024-01-07 = Sunday    → day 0   (DAYOFWEEK=1, minus 1)
+#   2024-01-08 = Monday    → day 1   (DAYOFWEEK=2, minus 1)
+#   2024-01-09 = Tuesday   → day 2   (DAYOFWEEK=3, minus 1)
+#   2024-01-13 = Saturday  → day 6   (DAYOFWEEK=7, minus 1)
+#   2024-01-14 = Sunday    → day 0   (DAYOFWEEK=1, minus 1)
+
+SAT = datetime(2024, 1, 6)
+SUN = datetime(2024, 1, 7)
+MON = datetime(2024, 1, 8)
+TUE = datetime(2024, 1, 9)
+SAT2 = datetime(2024, 1, 13)
+SUN2 = datetime(2024, 1, 14)
+
+
+def at(base: datetime, hour: int) -> datetime:
+    """Return *base* date with the given hour (minutes/seconds zeroed)."""
+    return base.replace(hour=hour, minute=0, second=0, microsecond=0)
+
+
+class TestGetActivityHeatmap:
+    def _call(self, **kwargs):
+        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=None)
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_activity_heatmap(**defaults)
+
+    def _cell(self, results, day, hour):
+        """Return the cell matching (day, hour), or None if absent."""
+        return next((r for r in results if r["day"] == day and r["hour"] == hour), None)
+
+    # ── status / shape ────────────────────────────────────────────────────────
+
+    def test_returns_200(self, player):
+        status, _ = self._call()
+        assert status == 200
+
+    def test_empty_results_when_no_games(self, player):
+        _, data = self._call()
+        assert data["results"] == []
+
+    def test_echoes_player_uuid(self, player):
+        _, data = self._call()
+        assert data["player"] == PLAYER_UUID
+
+    # ── day encoding: DAYOFWEEK() - 1 ────────────────────────────────────────
+
+    def test_sunday_encoded_as_day_zero(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=14) is not None
+
+    def test_monday_encoded_as_day_one(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(MON, 9)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=1, hour=9) is not None
+
+    def test_saturday_encoded_as_day_six(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SAT, 20)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=6, hour=20) is not None
+
+    def test_all_seven_days_encode_correctly(self, player, map_obj):
+        # Jan 7-13 2024: Sun Mon Tue Wed Thu Fri Sat → days 0-6
+        for offset, expected_day in enumerate(range(7)):
+            dt = (SUN + __import__("datetime").timedelta(days=offset)).replace(
+                hour=0, minute=0, second=0, microsecond=0
+            )
+            make_player_game(player, make_game(map_obj, is_finished=True, time=dt))
+        _, data = self._call()
+        present_days = {r["day"] for r in data["results"]}
+        assert present_days == set(range(7))
+
+    # ── hour encoding ─────────────────────────────────────────────────────────
+
+    def test_hour_zero_encoded_correctly(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 0)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=0) is not None
+
+    def test_hour_23_encoded_correctly(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 23)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=23) is not None
+
+    # ── aggregation ───────────────────────────────────────────────────────────
+
+    def test_multiple_games_same_slot_are_summed(self, player, map_obj):
+        for _ in range(4):
+            make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=14)["count"] == 4
+
+    def test_different_hours_same_day_produce_separate_cells(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 10)))
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 10)))
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=10)["count"] == 2
+        assert self._cell(data["results"], day=0, hour=14)["count"] == 1
+
+    def test_same_hour_different_days_produce_separate_cells(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 10)))
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(MON, 10)))
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(MON, 10)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=10)["count"] == 1
+        assert self._cell(data["results"], day=1, hour=10)["count"] == 2
+
+    def test_cells_with_no_games_absent_from_results(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        _, data = self._call()
+        assert len(data["results"]) == 1
+        assert self._cell(data["results"], day=0, hour=15) is None
+
+    # ── ordering ──────────────────────────────────────────────────────────────
+
+    def test_results_ordered_by_day_then_hour(self, player, map_obj):
+        # Insert in reverse order to confirm ordering is by value, not insertion
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SAT, 20)))  # day 6 h20
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))  # day 0 h14
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 8)))  # day 0 h8
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(MON, 10)))  # day 1 h10
+        _, data = self._call()
+        results = data["results"]
+        assert [(r["day"], r["hour"]) for r in results] == [(0, 8), (0, 14), (1, 10), (6, 20)]
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_min_date_excludes_earlier_games(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))  # before
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(MON, 10)))  # after
+        min_ts = int(at(MON, 0).timestamp())
+        _, data = self._call(min_date=min_ts)
+        assert self._cell(data["results"], day=0, hour=14) is None
+        assert self._cell(data["results"], day=1, hour=10) is not None
+
+    def test_max_date_excludes_later_games(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))  # before
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(MON, 10)))  # after
+        max_ts = int(at(SUN, 23).timestamp())
+        _, data = self._call(max_date=max_ts)
+        assert self._cell(data["results"], day=0, hour=14) is not None
+        assert self._cell(data["results"], day=1, hour=10) is None
+
+    def test_min_and_max_date_window_keeps_only_matching_games(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SAT, 12)))  # day before window
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))  # inside window
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(TUE, 12)))  # day after window
+        min_ts = int(at(SUN, 0).timestamp())
+        max_ts = int(at(SUN, 23).timestamp())
+        _, data = self._call(min_date=min_ts, max_date=max_ts)
+        assert len(data["results"]) == 1
+        assert data["results"][0] == {"day": 0, "hour": 14, "count": 1}
+
+    def test_no_games_in_window_returns_empty(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        # Window is Mon only — no games there
+        min_ts = int(at(MON, 0).timestamp())
+        max_ts = int(at(MON, 23).timestamp())
+        _, data = self._call(min_date=min_ts, max_date=max_ts)
+        assert data["results"] == []
+
+    def test_same_weekday_across_multiple_weeks_aggregated(self, player, map_obj):
+        # Two Sundays — both should land in day=0, hour=10 and be summed
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 10)))
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN2, 10)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=10)["count"] == 2
+
+    # ── player isolation ──────────────────────────────────────────────────────
+
+    def test_only_counts_games_for_requested_player(self, player, opponent, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        make_player_game(opponent, make_game(map_obj, is_finished=True, time=at(SUN, 14)))  # other player
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=14)["count"] == 1
+
+    def test_returns_empty_for_player_with_no_games(self, player, opponent, map_obj):
+        make_player_game(opponent, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        _, data = self._call(player=PLAYER_UUID)
+        assert data["results"] == []
+
+    # ── finished / unfinished ─────────────────────────────────────────────────
+
+    def test_counts_unfinished_games(self, player, map_obj):
+        """Heatmap reflects participation; unfinished games must be counted."""
+        make_player_game(player, make_game(map_obj, is_finished=False, time=at(SUN, 14)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=14)["count"] == 1
+
+    def test_finished_and_unfinished_games_both_counted(self, player, map_obj):
+        make_player_game(player, make_game(map_obj, is_finished=True, time=at(SUN, 14)))
+        make_player_game(player, make_game(map_obj, is_finished=False, time=at(SUN, 14)))
+        _, data = self._call()
+        assert self._cell(data["results"], day=0, hour=14)["count"] == 2
