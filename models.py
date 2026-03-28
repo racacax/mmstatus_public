@@ -36,6 +36,7 @@ class Game(BaseModel):
 
     class Meta:
         ordering = ("-id",)
+        indexes = ((("id",), True),)
 
 
 class Zone(BaseModel):
