@@ -34,14 +34,40 @@ CLIENT_ID=XXXX
 CLIENT_SECRET=XXXX
 ENABLE_OAUTH=True
 ENABLE_THREADS=True
+NADEO_REFRESH_TOKEN=XXXX
+UBISOFT_OAUTH_REFRESH_TOKEN=XXXX
+# NADEO_CREDENTIALS_FILE=nadeo_credentials.json  # optional, default shown
 ```
-#### nd_tk.txt and tk.txt files
-To configure in-game API, you need to get refresh token. Follow this tutorial to get it https://webservices.openplanet.dev/auth .
+#### API credentials
+Tokens for the Trackmania APIs are stored in a single JSON file (`nadeo_credentials.json` by default).
+The file path is configurable via the `NADEO_CREDENTIALS_FILE` env variable.
 
-Once done, you'll need to put it in the `nd_tk.txt` file. This file will be updated by the app regularly (on startup + twice a day) because it keeps changing. If the app didn't run for a while, you might need to change it later.
+The file is created and updated automatically by the app. On first run, you need to supply the initial
+refresh tokens via `.env` so the app can bootstrap itself:
 
-Create also a file named `tk.txt`. It will be used for the public API. This one will get updated as well, depending on `CLIENT_ID` and `CLIENT_SECRET`.
-However, you need to put a refresh token in the first place (see: https://doc.trackmania.com/web/web-services/auth/ )
+```
+NADEO_REFRESH_TOKEN=<your in-game API refresh token>
+UBISOFT_OAUTH_REFRESH_TOKEN=<your public OAuth refresh token>
+```
+
+- `NADEO_REFRESH_TOKEN` — in-game (NadeoCore) refresh token. Follow https://webservices.openplanet.dev/auth to obtain it.
+- `UBISOFT_OAUTH_REFRESH_TOKEN` — public OAuth refresh token. See https://doc.trackmania.com/web/web-services/auth/
+
+Once the app has run once, these bootstrap tokens are no longer needed — all three credential sets
+(`NadeoCore`, `NadeoLive`, `NadeoOauth`) are stored and refreshed in `nadeo_credentials.json`.
+
+The file format is:
+```json
+{
+  "NadeoCore":  { "access_token": "...", "refresh_token": "...", "expire_time": "2099-01-01T00:00:00" },
+  "NadeoLive":  { "access_token": "...", "refresh_token": "...", "expire_time": "2099-01-01T00:00:00" },
+  "NadeoOauth": { "access_token": "...", "refresh_token": "...", "expire_time": "2099-01-01T00:00:00" }
+}
+```
+
+**Migrating from legacy `nd_tk.txt` / `tk.txt`:** set `NADEO_REFRESH_TOKEN` and
+`UBISOFT_OAUTH_REFRESH_TOKEN` in `.env` to the values from those files and remove the old files.
+The app will write `nadeo_credentials.json` on the next startup.
 ### Build image
 Run `make update` to build the mmstatus image.
 ### Run container
