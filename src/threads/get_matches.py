@@ -127,8 +127,7 @@ class GetMatchesThread(AbstractThread):
             )
             if "lock" in str(e).lower():
                 logger.warning(f"Previous error for match id {self.match_id} was a deadlock")
-            time.sleep(1)
-            return self.insert_match()
+            return False
         return True
 
     def run_insert_matches_loop(self):
