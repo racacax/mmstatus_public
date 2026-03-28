@@ -22,6 +22,7 @@ class GetMatchesThread(AbstractThread):
         Get last match id in the database. Will set the current id to last inserted id + 1
         If a custom START_ID is provided, this one will be used if higher (+1)
         """
+        super().__init__()
         last_match = Game.select().order_by(Game.id.desc()).paginate(1, 1).get_or_none()
         logger.info(f"Starting get_matches thread. Last match: {last_match}")
         match_id = (last_match and last_match.id or settings.START_ID) + 1
@@ -119,7 +120,8 @@ class GetMatchesThread(AbstractThread):
                     logger.info(f"Got match name {name} which is not a valid Matchmaking name. Skipping...")
                     return True
         except Exception as e:
-            logger.error(
+            self._record_error()
+            logger.info(
                 f"Exception while creating match with id {self.match_id}",
                 extra={"error": e, "traceback": traceback.format_exc()},
             )
@@ -141,7 +143,8 @@ class GetMatchesThread(AbstractThread):
     def handle(self):
         while True:
             if self.tries > MAX_RETRIES:
-                logger.info(f"Exceeding {MAX_RETRIES} tries. Skipping to next id.")
+                self._record_error()
+                logger.error(f"Exceeding {MAX_RETRIES} tries. Skipping to next id.")
                 self.tries = 0
                 self.match_id += 1
             self.run_insert_matches_loop()

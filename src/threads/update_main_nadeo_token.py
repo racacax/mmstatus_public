@@ -16,6 +16,7 @@ class UpdateMainNadeoTokenThread(AbstractThread):
                 NadeoCore.refresh_token()
                 logger.info("Refreshed Nadeo access token successfully")
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},

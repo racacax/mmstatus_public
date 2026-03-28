@@ -99,7 +99,7 @@ class UpdateStatsPerRank(AbstractThread):
                 cls.compute_stats(start_time, end_time, period_id, rank["id"], condition)
 
     @classmethod
-    def run(cls):
+    def run_stats(cls):
         for period, period_id in STATS_PERIODS.items():
             start_time, end_time = get_last_time_range(period)
             cls.create_if_not_exists(period, period_id, start_time, end_time)
@@ -107,8 +107,9 @@ class UpdateStatsPerRank(AbstractThread):
     def handle(self):
         while True:
             try:
-                self.run()
+                self.run_stats()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "Error while updating stats per rank",
                     extra={"exception": e, "traceback": traceback.format_exc()},

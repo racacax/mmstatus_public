@@ -16,6 +16,7 @@ from src.threads.update_player_ranks import UpdatePlayerRanksThread
 from src.threads.update_player_zones import UpdatePlayerZonesThread
 from src.threads.update_players import UpdatePlayersThread
 from src.log_utils import create_logger
+from src.thread_health import write_health_file
 
 from settings import ENABLE_OAUTH, ENABLE_THREADS
 
@@ -26,7 +27,7 @@ def start_thread(cls):
     instance = cls()
     t = threading.Thread(target=instance.run)
     t.start()
-    return t
+    return t, instance
 
 
 if ENABLE_THREADS:
@@ -47,13 +48,17 @@ if ENABLE_THREADS:
         thread_classes.append(UpdatePlayersThread)
 
     active_threads = {cls: start_thread(cls) for cls in thread_classes}
+    write_health_file(active_threads)
 
     while True:
         time.sleep(60)
-        for cls, t in list(active_threads.items()):
+        for cls, (t, instance) in list(active_threads.items()):
             if not t.is_alive():
                 logger.warning(f"Thread {cls.__name__} has crashed. Restarting...")
-                active_threads[cls] = start_thread(cls)
+                new_t, new_instance = start_thread(cls)
+                new_instance._record_error()
+                active_threads[cls] = new_t, new_instance
+        write_health_file(active_threads)
 else:
     while True:
         time.sleep(1)

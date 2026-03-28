@@ -18,8 +18,7 @@ class UpdatePlayersThread(AbstractThread):
     Fetch players that didn't have name update in the last 24 hours (max 50)
     """
 
-    @staticmethod
-    def update_players(players: list[Player]):
+    def update_players(self, players: list[Player]):
         ids = [str(p.uuid) for p in players]
         logger.info("Update players", extra={"ids": ids})
         try:
@@ -34,6 +33,7 @@ class UpdatePlayersThread(AbstractThread):
                 p.last_name_update = datetime.now()
                 p.save()
         except Exception as e:
+            self._record_error()
             logger.error(
                 "Error while updating players",
                 extra={
@@ -70,6 +70,7 @@ class UpdatePlayersThread(AbstractThread):
                 logger.info(f"Waiting {seconds_to_wait}s before starting thread again...")
                 time.sleep(seconds_to_wait)
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},

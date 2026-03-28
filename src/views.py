@@ -1,4 +1,5 @@
 import json
+import os
 from datetime import datetime, timedelta
 from inspect import signature
 from uuid import UUID
@@ -7,6 +8,7 @@ from peewee import Case, fn, JOIN
 
 from models import Player, PlayerGame, Game, Map, Season, Zone
 from src.player_views import PlayerAPIViews
+from src.thread_health import HEALTH_FILE
 from src.utils import Option, format_type, POINTS_TYPE, route, RouteDescriber, RANKS
 from src.view_utils.status import get_rollup_stats, compute_remaining_stats, get_merged_stats
 
@@ -52,7 +54,7 @@ class APIViews(RouteDescriber):
             .join(Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country")
             .order_by(Game.id.desc())
             .where(
-                Player.name.contains(name),
+                Player.name.startswith(name),
                 Player.rank >= min_rank,
                 Player.rank <= max_rank,
                 Player.points >= min_elo,
@@ -574,6 +576,30 @@ class APIViews(RouteDescriber):
         ) = -1,
     ):
         return PlayerAPIViews.get_statistics(player, min_date, max_date, season)
+
+    @staticmethod
+    @route(
+        name="thread_health",
+        summary="Thread health",
+        description="Returns health status of all background threads: running state, uptime, time since last error.",
+    )
+    def get_thread_health():
+        if not os.path.exists(HEALTH_FILE):
+            return 503, {"message": "Thread health data not yet available"}
+        with open(HEALTH_FILE, "r") as f:
+            raw = json.load(f)
+        now = datetime.now()
+        results = {}
+        for thread_name, info in raw.items():
+            start_time = datetime.fromisoformat(info["start_time"])
+            last_error_time = datetime.fromisoformat(info["last_error_time"]) if info["last_error_time"] else None
+            results[thread_name] = {
+                "is_alive": info["is_alive"],
+                "uptime_seconds": (now - start_time).total_seconds(),
+                "seconds_since_last_error": (now - last_error_time).total_seconds() if last_error_time else None,
+                "error_count": info["error_count"],
+            }
+        return 200, results
 
     @staticmethod
     @route(

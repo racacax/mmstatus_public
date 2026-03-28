@@ -38,6 +38,7 @@ class UpdateTopPlayersPositionThread(AbstractThread):
             try:
                 self.run_iteration()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "Error while updating player positions",
                     extra={"exception": e, "traceback": traceback.format_exc()},

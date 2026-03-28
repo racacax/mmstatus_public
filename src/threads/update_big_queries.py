@@ -471,6 +471,7 @@ def get_activity_per_rank_distribution(min_date, _):
 
 class UpdateBigQueriesThread(AbstractThread):
     def __init__(self):
+        super().__init__()
         self.path = "cache/"
         if not os.path.exists(self.path):
             os.makedirs(self.path)
@@ -497,6 +498,7 @@ class UpdateBigQueriesThread(AbstractThread):
             f.write(results)
             f.close()
         except Exception as e:
+            self._record_error()
             logger.error(
                 f"Error for query {name}",
                 extra={"exception": e, "traceback": traceback.format_exc()},

@@ -39,6 +39,7 @@ class UpdatePlayerZonesThread(AbstractThread):
             if len(players) > 0:
                 self.get_zones_and_update(players)
         except Exception as e:
+            self._record_error()
             logger.error(
                 "Error while updating players zones",
                 extra={
@@ -52,6 +53,7 @@ class UpdatePlayerZonesThread(AbstractThread):
             try:
                 self.run_iteration()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},

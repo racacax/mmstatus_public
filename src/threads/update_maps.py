@@ -10,8 +10,7 @@ logger = create_logger("update_maps")
 
 
 class UpdateMapsThread(AbstractThread):
-    @staticmethod
-    def run_iteration():
+    def run_iteration(self):
         maps = Map.filter(name="")
         logger.info(f"Found {len(maps)} with empty name")
         for m in maps:
@@ -21,6 +20,7 @@ class UpdateMapsThread(AbstractThread):
                 m.name = mp["name"]
                 m.save()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     f"Error while fetching info for map with uid {m.uid}",
                     extra={"exception": e, "traceback": traceback.format_exc()},

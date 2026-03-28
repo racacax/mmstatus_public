@@ -132,6 +132,7 @@ class UpdateMatchesThread(AbstractThread):
                 if nadeo_match["status"] == "COMPLETED":
                     self.complete_match(match)
         except Exception as e:
+            self._record_error()
             logger.error(
                 f"Error while updating match with id {match.id}",
                 extra={"exception": e, "traceback": traceback.format_exc()},
@@ -146,6 +147,7 @@ class UpdateMatchesThread(AbstractThread):
             try:
                 self.run_iteration()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},

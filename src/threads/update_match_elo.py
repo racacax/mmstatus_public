@@ -15,8 +15,7 @@ class UpdateMatchEloThread(AbstractThread):
     Fetch matches and compute statistics about players elo.
     """
 
-    @staticmethod
-    def update_elo(match: Game):
+    def update_elo(self, match: Game):
         logger.info(f"Updating elo for match id {match.id}", extra={"match": match})
         try:
             player_points = [p.player.points for p in match.player_games]
@@ -25,6 +24,7 @@ class UpdateMatchEloThread(AbstractThread):
             match.average_elo = mean(player_points)
             match.save()
         except Exception as e:
+            self._record_error()
             logger.error(
                 f"Error while updating match with id {match.id}",
                 extra={"exception": e, "traceback": traceback.format_exc()},
@@ -51,6 +51,7 @@ class UpdateMatchEloThread(AbstractThread):
                 logger.info("Fetching matches with uncomputed average elo")
                 self.run_iteration()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},

@@ -1,4 +1,5 @@
 import threading
+from datetime import datetime
 from unittest.mock import patch
 
 import pytest
@@ -13,6 +14,7 @@ class SuccessThread(AbstractThread):
     """handle() completes normally."""
 
     def __init__(self):
+        super().__init__()
         self.call_count = 0
 
     def handle(self):
@@ -37,6 +39,7 @@ class BlockingThread(AbstractThread):
     """Blocks inside handle() until stop_event is set."""
 
     def __init__(self, stop_event: threading.Event):
+        super().__init__()
         self.stop_event = stop_event
 
     def handle(self):
@@ -161,6 +164,86 @@ class TestAbstractThreadRun:
             th.run()
 
 
+# ── AbstractThread state (start_time / last_error_time / _record_error) ──────
+
+
+class TestAbstractThreadState:
+    def test_init_sets_start_time(self):
+        before = datetime.now()
+        th = AlwaysCrashThread()
+        after = datetime.now()
+        assert before <= th.start_time <= after
+
+    def test_init_sets_last_error_time_none(self):
+        th = AlwaysCrashThread()
+        assert th.last_error_time is None
+
+    def test_init_sets_error_count_zero(self):
+        th = AlwaysCrashThread()
+        assert th.error_count == 0
+
+    def test_record_error_increments_error_count(self):
+        th = AlwaysCrashThread()
+        th._record_error()
+        assert th.error_count == 1
+
+    def test_record_error_accumulates_on_repeated_calls(self):
+        th = AlwaysCrashThread()
+        th._record_error()
+        th._record_error()
+        assert th.error_count == 2
+
+    def test_run_does_not_increment_error_count_on_success(self):
+        th = SuccessThread()
+        th.run()
+        assert th.error_count == 0
+
+    def test_run_does_not_increment_error_count_on_crash(self):
+        th = AlwaysCrashThread()
+        with pytest.raises(ValueError):
+            th.run()
+        assert th.error_count == 0
+
+    def test_record_error_sets_last_error_time(self):
+        th = AlwaysCrashThread()
+        before = datetime.now()
+        th._record_error()
+        after = datetime.now()
+        assert before <= th.last_error_time <= after
+
+    def test_record_error_updates_on_repeated_calls(self):
+        th = AlwaysCrashThread()
+        th._record_error()
+        first = th.last_error_time
+        th._record_error()
+        assert th.last_error_time >= first
+
+    def test_run_does_not_set_last_error_time_on_crash(self):
+        th = AlwaysCrashThread()
+        with pytest.raises(ValueError):
+            th.run()
+        assert th.last_error_time is None
+
+    def test_run_does_not_set_last_error_time_on_success(self):
+        th = SuccessThread()
+        th.run()
+        assert th.last_error_time is None
+
+    def test_subclass_with_custom_init_has_start_time_when_super_called(self):
+        th = SuccessThread()
+        assert isinstance(th.start_time, datetime)
+
+    def test_subclass_with_custom_init_has_last_error_time_none_when_super_called(self):
+        th = SuccessThread()
+        assert th.last_error_time is None
+
+    def test_record_error_does_not_affect_start_time(self):
+        th = AlwaysCrashThread()
+        original_start = th.start_time
+        th._record_error()
+        assert th.start_time == original_start
+
+
 # ── Thread crash detection (is_alive behaviour) ──────────────────────────────
 
 
@@ -283,6 +366,7 @@ class TestWatchdogRestartPattern:
 
         class TrackingThread(AbstractThread):
             def __init__(self):
+                super().__init__()
                 self.call_count = 0
                 instances.append(self)
 
@@ -307,3 +391,52 @@ class TestWatchdogRestartPattern:
         restarted = watchdog_check(active_threads)
 
         assert restarted == []
+
+
+# ── Crash counted on new instance (manager pattern) ──────────────────────────
+
+
+def manager_start_thread(cls):
+    """Mirror of manager.py start_thread: returns (t, instance)."""
+    instance = cls()
+    t = threading.Thread(target=instance.run)
+    t.start()
+    return t, instance
+
+
+def manager_watchdog_step(active_threads):
+    """One watchdog iteration mirroring manager.py: calls _record_error on the new instance."""
+    for cls, (t, instance) in list(active_threads.items()):
+        if not t.is_alive():
+            new_t, new_instance = manager_start_thread(cls)
+            new_instance._record_error()
+            active_threads[cls] = new_t, new_instance
+
+
+@pytest.mark.filterwarnings("ignore::pytest.PytestUnhandledThreadExceptionWarning")
+class TestCrashCountedOnRestart:
+    """Verify the manager counts a crash as an error on the replacement instance."""
+
+    def test_new_instance_has_error_count_one_after_crash(self):
+        t, instance = manager_start_thread(AlwaysCrashThread)
+        t.join(timeout=2)
+
+        active_threads = {AlwaysCrashThread: (t, instance)}
+        manager_watchdog_step(active_threads)
+
+        _, new_instance = active_threads[AlwaysCrashThread]
+        assert new_instance.error_count == 1
+
+    def test_new_instance_does_not_inherit_old_error_count(self):
+        """Error count resets on restart — no carryover from previous run."""
+        instance = AlwaysCrashThread()
+        instance.error_count = 99  # simulate many prior errors on old instance
+        t = threading.Thread(target=instance.run)
+        t.start()
+        t.join(timeout=2)
+
+        active_threads = {AlwaysCrashThread: (t, instance)}
+        manager_watchdog_step(active_threads)
+
+        _, new_instance = active_threads[AlwaysCrashThread]
+        assert new_instance.error_count == 1  # only the crash, not 100

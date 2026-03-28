@@ -9,8 +9,7 @@ logger = create_logger("update_player_countries")
 
 
 class UpdatePlayerCountriesThread(AbstractThread):
-    @staticmethod
-    def run_iteration():
+    def run_iteration(self):
         logger.info("Fetching first 50 players without country info")
         players = Player.select(Player).where(Player.zone != None, Player.country == None).paginate(1, 50)
         logger.info(f"Found {len(players)} players")
@@ -26,6 +25,7 @@ class UpdatePlayerCountriesThread(AbstractThread):
                 p.country = final_zone
                 p.save()
         except Exception as e:
+            self._record_error()
             logger.error(
                 "Error while updating players info",
                 extra={"exception": e, "traceback": traceback.format_exc()},
@@ -36,6 +36,7 @@ class UpdatePlayerCountriesThread(AbstractThread):
             try:
                 self.run_iteration()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},

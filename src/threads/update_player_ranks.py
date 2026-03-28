@@ -22,8 +22,7 @@ class UpdatePlayerRanksThread(AbstractThread):
 
     """
 
-    @staticmethod
-    def update_player(p: Player, points: int, rank: int, season: Season) -> None:
+    def update_player(self, p: Player, points: int, rank: int, season: Season) -> None:
         try:
             p.points = points
             p.rank = rank
@@ -51,6 +50,7 @@ class UpdatePlayerRanksThread(AbstractThread):
                 pg.rank_after_match = p.rank
                 pg.save()
         except Exception as e:
+            self._record_error()
             logger.error(
                 "Error while updating player rank",
                 extra={
@@ -71,6 +71,7 @@ class UpdatePlayerRanksThread(AbstractThread):
             for p in players:
                 self.update_player(p, scores.get(str(p.uuid), 0), ranks.get(str(p.uuid), 0), season)
         except Exception as e:
+            self._record_error()
             logger.error(
                 "Error while updating players ranks",
                 extra={
@@ -101,6 +102,7 @@ class UpdatePlayerRanksThread(AbstractThread):
             try:
                 self.run_iteration()
             except Exception as e:
+                self._record_error()
                 logger.error(
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},
