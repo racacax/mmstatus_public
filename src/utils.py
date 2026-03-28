@@ -46,7 +46,7 @@ def post(url, data, token):
 
 def authenticated(method):
     def func(cls, *args, **kwargs):
-        if cls.EXPIRE_TIME <= datetime.now():
+        if cls.get_expire_time() <= datetime.now():
             cls.refresh_token()
         return method(cls, *args, **kwargs)
 

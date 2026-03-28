@@ -5,6 +5,9 @@ node_modules
 windows
 tk.txt
 nd_tk.txt
+nadeo_credentials.json
+nadeo_credentials.json.lock
+nadeo_credentials.json.tmp
 cache
 logs/*
 .idea

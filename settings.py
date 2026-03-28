@@ -8,11 +8,19 @@ load_dotenv()
 
 CLIENT_ID = os.getenv("CLIENT_ID")
 CLIENT_SECRET = os.getenv("CLIENT_SECRET")
-NADEO_FILE_PATH = os.path.join(os.path.dirname(__file__), "tk.txt")
-UBISOFT_OAUTH_REFRESH_TOKEN = open(NADEO_FILE_PATH, "r").read().strip()
 START_ID = int(os.getenv("START_ID", default=8958871))
-NADEO2_FILE_PATH = os.path.join(os.path.dirname(__file__), "nd_tk.txt")
-NADEO_REFRESH_TOKEN = open(NADEO2_FILE_PATH, "r").read().strip()
+NADEO_CREDENTIALS_FILE = os.getenv("NADEO_CREDENTIALS_FILE", "nadeo_credentials.json")
+
+# Bootstrap refresh tokens — used only before nadeo_credentials.json is first populated.
+# Falls back to the legacy txt files if they exist, then to env vars.
+_tk_path = os.path.join(os.path.dirname(__file__), "tk.txt")
+UBISOFT_OAUTH_REFRESH_TOKEN = (
+    open(_tk_path).read().strip() if os.path.exists(_tk_path) else os.getenv("UBISOFT_OAUTH_REFRESH_TOKEN", "")
+)
+_nd_tk_path = os.path.join(os.path.dirname(__file__), "nd_tk.txt")
+NADEO_REFRESH_TOKEN = (
+    open(_nd_tk_path).read().strip() if os.path.exists(_nd_tk_path) else os.getenv("NADEO_REFRESH_TOKEN", "")
+)
 ENABLE_OAUTH = os.getenv("ENABLE_OAUTH", "True") == "True"
 ENABLE_THREADS = os.getenv("ENABLE_THREADS", "True") == "True"
 DATABASE_NAME = os.getenv("DATABASE_NAME", "mmstatus")
