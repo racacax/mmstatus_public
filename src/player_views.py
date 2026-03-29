@@ -480,21 +480,6 @@ class PlayerAPIViews(RouteDescriber):
                 .dicts()
             )[0]
 
-            last_match = (
-                PlayerGame.select(PlayerGame.points_after_match)
-                .join(Game, JOIN.LEFT_OUTER)
-                .where(
-                    PlayerGame.player_id == player,
-                    Game.time >= min_date,
-                    Game.time <= max_date,
-                    PlayerGame.points_after_match != None,
-                )
-                .order_by(PlayerGame.id.desc())
-                .paginate(1, 1)
-                .get_or_none()
-            )
-            points = last_match.points_after_match if last_match else best_ps.points
-
             return 200, {
                 "uuid": str(p_obj.uuid),
                 "name": p_obj.name,
@@ -502,7 +487,7 @@ class PlayerAPIViews(RouteDescriber):
                 "stats": {
                     "season": selected_season.name,
                     "rank": best_ps.rank,
-                    "points": points,
+                    "points": best_ps.points,
                     "total_played": int(game_stats["total_played"] or 0),
                     "total_wins": int(game_stats["total_wins"] or 0),
                     "total_losses": int(game_stats["total_losses"] or 0),

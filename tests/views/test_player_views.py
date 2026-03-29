@@ -411,19 +411,6 @@ class TestGetStatisticsMultiSeason:
         assert data["stats"]["season"] == "Spring 2025"
         assert data["stats"]["rank"] == 5
 
-    def test_points_from_last_match_in_range(self):
-        s1, s2, now, mid = self._make_seasons()
-        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
-        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
-        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
-        m = Map.create(uid="M1", name="Map1")
-        g1 = Game.create(map=m, time=mid - timedelta(days=5), is_finished=True)
-        g2 = Game.create(map=m, time=mid + timedelta(days=5), is_finished=True)
-        PlayerGame.create(player=player, game=g1, points_after_match=900)
-        PlayerGame.create(player=player, game=g2, points_after_match=1300)
-        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
-        assert data["stats"]["points"] == 1300
-
     def test_points_fallback_to_best_season_when_no_points_after_match(self):
         s1, s2, now, mid = self._make_seasons()
         player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
