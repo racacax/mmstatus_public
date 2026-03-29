@@ -73,7 +73,7 @@ class TestUpdatePlayerBasic:
     def test_updates_last_points_update(self):
         season = make_season()
         p = make_player()
-        before = datetime.now()
+        before = datetime.now().replace(microsecond=0)
         UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
         assert Player.get_by_id(p.uuid).last_points_update >= before
 

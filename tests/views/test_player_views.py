@@ -330,6 +330,176 @@ class TestGetStatistics:
         assert stats["total_losses"] == 2
 
 
+# ── get_statistics: multi-season time range ───────────────────────────────────
+
+
+class TestGetStatisticsMultiSeason:
+    """
+    When a time range spans multiple seasons, game stats cover the full range
+    and season/rank/points come from the player's best season in that range.
+    """
+
+    def _call(self, min_ts, max_ts):
+        return PlayerAPIViews.get_statistics(
+            player=PLAYER_UUID,
+            min_date=int(min_ts),
+            max_date=int(max_ts),
+            season=-1,
+        )
+
+    def _make_seasons(self):
+        now = datetime.now().replace(microsecond=0)
+        mid = now - timedelta(days=45)
+        s1 = Season.create(name="Spring 2025", start_time=now - timedelta(days=90), end_time=mid)
+        s2 = Season.create(name="Summer 2025", start_time=mid, end_time=now + timedelta(days=45))
+        return s1, s2, now, mid
+
+    def test_returns_200_for_multi_season_range(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        t1 = mid - timedelta(days=10)
+        t2 = mid + timedelta(days=10)
+        g1 = Game.create(map=m, time=t1, is_finished=True)
+        g2 = Game.create(map=m, time=t2, is_finished=True)
+        PlayerGame.create(player=player, game=g1, is_win=True)
+        PlayerGame.create(player=player, game=g2, is_win=False)
+        status, _ = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert status == 200
+
+    def test_game_stats_span_both_seasons(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        g1 = Game.create(map=m, time=mid - timedelta(days=10), is_finished=True)
+        g2 = Game.create(map=m, time=mid + timedelta(days=10), is_finished=True)
+        g3 = Game.create(map=m, time=mid + timedelta(days=20), is_finished=True)
+        PlayerGame.create(player=player, game=g1, is_win=True)
+        PlayerGame.create(player=player, game=g2, is_win=True)
+        PlayerGame.create(player=player, game=g3, is_win=False)
+        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert data["stats"]["total_played"] == 3
+        assert data["stats"]["total_wins"] == 2
+        assert data["stats"]["total_losses"] == 1
+
+    def test_best_season_by_points_is_used(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        g = Game.create(map=m, time=mid + timedelta(days=1), is_finished=True)
+        PlayerGame.create(player=player, game=g, is_win=True)
+        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert data["stats"]["season"] == "Summer 2025"
+        assert data["stats"]["rank"] == 80
+
+    def test_best_season_rank_is_from_best_season(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        # s1 has higher points
+        PlayerSeason.create(player=player, season=s1, points=2000, rank=5)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        g = Game.create(map=m, time=mid - timedelta(days=1), is_finished=True)
+        PlayerGame.create(player=player, game=g, is_win=True)
+        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert data["stats"]["season"] == "Spring 2025"
+        assert data["stats"]["rank"] == 5
+
+    def test_points_from_last_match_in_range(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        g1 = Game.create(map=m, time=mid - timedelta(days=5), is_finished=True)
+        g2 = Game.create(map=m, time=mid + timedelta(days=5), is_finished=True)
+        PlayerGame.create(player=player, game=g1, points_after_match=900)
+        PlayerGame.create(player=player, game=g2, points_after_match=1300)
+        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert data["stats"]["points"] == 1300
+
+    def test_points_fallback_to_best_season_when_no_points_after_match(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        g = Game.create(map=m, time=mid + timedelta(days=1), is_finished=True)
+        PlayerGame.create(player=player, game=g, points_after_match=None)
+        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert data["stats"]["points"] == 1200
+
+    def test_returns_404_when_no_overlapping_player_season(self):
+        s1, s2, now, mid = self._make_seasons()
+        Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        # No PlayerSeason records
+        status, _ = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert status == 404
+
+    def test_returns_404_for_unknown_player(self):
+        s1, s2, now, mid = self._make_seasons()
+        # No player created
+        status, _ = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert status == 404
+
+    def test_only_seasons_overlapping_range_are_considered(self):
+        now = datetime.now().replace(microsecond=0)
+        # Three seasons: only the middle one overlaps the range
+        s_old = Season.create(name="Old", start_time=now - timedelta(days=200), end_time=now - timedelta(days=100))
+        s_mid = Season.create(name="Mid", start_time=now - timedelta(days=90), end_time=now - timedelta(days=10))
+        s_new = Season.create(name="New", start_time=now - timedelta(days=5), end_time=now + timedelta(days=60))
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s_old, points=5000, rank=1)  # outside range
+        PlayerSeason.create(player=player, season=s_mid, points=800, rank=200)  # inside range
+        PlayerSeason.create(player=player, season=s_new, points=900, rank=150)  # outside range (after max_date)
+        m = Map.create(uid="M1", name="Map1")
+        g = Game.create(map=m, time=now - timedelta(days=50), is_finished=True)
+        PlayerGame.create(player=player, game=g, is_win=True)
+        # Range covers only s_mid
+        min_ts = (now - timedelta(days=89)).timestamp()
+        max_ts = (now - timedelta(days=11)).timestamp()
+        _, data = PlayerAPIViews.get_statistics(
+            player=PLAYER_UUID, min_date=int(min_ts), max_date=int(max_ts), season=-1
+        )
+        assert data["stats"]["season"] == "Mid"
+
+    def test_wins_from_first_season_counted(self):
+        s1, s2, now, mid = self._make_seasons()
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s1, points=800, rank=200)
+        PlayerSeason.create(player=player, season=s2, points=1200, rank=80)
+        m = Map.create(uid="M1", name="Map1")
+        # 2 wins in s1, 1 loss in s2
+        g1 = Game.create(map=m, time=mid - timedelta(days=20), is_finished=True)
+        g2 = Game.create(map=m, time=mid - timedelta(days=10), is_finished=True)
+        g3 = Game.create(map=m, time=mid + timedelta(days=10), is_finished=True)
+        PlayerGame.create(player=player, game=g1, is_win=True)
+        PlayerGame.create(player=player, game=g2, is_win=True)
+        PlayerGame.create(player=player, game=g3, is_win=False)
+        _, data = self._call((now - timedelta(days=89)).timestamp(), now.timestamp())
+        assert data["stats"]["total_wins"] == 2
+        assert data["stats"]["total_losses"] == 1
+
+    def test_single_season_range_still_works(self):
+        """A range contained within a single season must behave as before."""
+        now = datetime.now().replace(microsecond=0)
+        s = Season.create(name="Spring 2025", start_time=now - timedelta(days=90), end_time=now + timedelta(days=30))
+        player = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=player, season=s, points=1000, rank=50)
+        m = Map.create(uid="M1", name="Map1")
+        g = Game.create(map=m, time=now - timedelta(days=5), is_finished=True)
+        PlayerGame.create(player=player, game=g, is_win=True)
+        _, data = self._call((now - timedelta(days=10)).timestamp(), now.timestamp())
+        assert data["stats"]["season"] == "Spring 2025"
+        assert data["stats"]["total_wins"] == 1
+
+
 # ── get_opponents_statistics ──────────────────────────────────────────────────
 
 

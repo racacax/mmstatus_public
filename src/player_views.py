@@ -423,14 +423,27 @@ class PlayerAPIViews(RouteDescriber):
             formatted_default="<current season>",
         ) = -1,
     ):
-        selected_season = None
-        show_season_points = True
-        if min_date or max_date:
-            show_season_points = False
+        use_time_range = bool(min_date or max_date)
+
+        if use_time_range:
             min_date = datetime.fromtimestamp(min_date)
             max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
-            selected_season = Season.filter(Season.start_time <= min_date, Season.end_time >= max_date).get_or_none()
-        elif season:
+            # Best season = highest points among PlayerSeasons whose season overlaps the range
+            best_ps = (
+                PlayerSeason.select(PlayerSeason, Season)
+                .join(Season)
+                .where(
+                    PlayerSeason.player == player,
+                    Season.start_time <= max_date,
+                    Season.end_time >= min_date,
+                )
+                .order_by(PlayerSeason.points.desc())
+                .get_or_none()
+            )
+            if not best_ps:
+                return 404, {"message": "Cannot retrieve any season with these filters"}
+            selected_season = best_ps.season
+        else:
             if season == -1:
                 selected_season = Season.get_current_season()
             else:
@@ -440,14 +453,62 @@ class PlayerAPIViews(RouteDescriber):
             min_date = selected_season.start_time
             max_date = selected_season.end_time
 
-        if not selected_season:
-            return 404, {"message": "Cannot retrieve any season with these filters"}
-
         finished = Game.is_finished == True
         total_played = fn.COUNT(PlayerGame.id)
         total_wins = fn.SUM(Case(None, [((finished & (PlayerGame.is_win == True)), 1)], 0))
         total_losses = fn.SUM(Case(None, [((finished & (PlayerGame.is_win == False)), 1)], 0))
         total_mvp = fn.SUM(PlayerGame.is_mvp)
+
+        if use_time_range:
+            p_obj = Player.get_or_none(Player.uuid == player)
+            if not p_obj:
+                return 404, {"message": "Current player either doesn't exist or didn't play this season"}
+
+            game_stats = (
+                PlayerGame.select(
+                    total_played.alias("total_played"),
+                    total_wins.alias("total_wins"),
+                    total_losses.alias("total_losses"),
+                    total_mvp.alias("total_mvp"),
+                )
+                .join(Game, JOIN.LEFT_OUTER)
+                .where(
+                    PlayerGame.player_id == player,
+                    Game.time >= min_date,
+                    Game.time <= max_date,
+                )
+                .dicts()
+            )[0]
+
+            last_match = (
+                PlayerGame.select(PlayerGame.points_after_match)
+                .join(Game, JOIN.LEFT_OUTER)
+                .where(
+                    PlayerGame.player_id == player,
+                    Game.time >= min_date,
+                    Game.time <= max_date,
+                    PlayerGame.points_after_match != None,
+                )
+                .order_by(PlayerGame.id.desc())
+                .paginate(1, 1)
+                .get_or_none()
+            )
+            points = last_match.points_after_match if last_match else best_ps.points
+
+            return 200, {
+                "uuid": str(p_obj.uuid),
+                "name": p_obj.name,
+                "club_tag": p_obj.club_tag,
+                "stats": {
+                    "season": selected_season.name,
+                    "rank": best_ps.rank,
+                    "points": points,
+                    "total_played": int(game_stats["total_played"] or 0),
+                    "total_wins": int(game_stats["total_wins"] or 0),
+                    "total_losses": int(game_stats["total_losses"] or 0),
+                    "total_mvp": int(game_stats["total_mvp"] or 0),
+                },
+            }
 
         query = (
             PlayerSeason.select(
@@ -475,26 +536,6 @@ class PlayerAPIViews(RouteDescriber):
         )
         if len(query) > 0:
             data = query[0]
-            points = data["points"]
-            if not show_season_points:
-                # Get player points at the time of the filter
-                last_match = (
-                    PlayerGame.select(PlayerGame.points_after_match)
-                    .join(Game, JOIN.LEFT_OUTER)
-                    .switch(PlayerGame)
-                    .join(Player, JOIN.LEFT_OUTER)
-                    .where(
-                        Player.uuid == player,
-                        Game.time >= selected_season.start_time,
-                        # maybe player didn't play any match during the filtered time
-                        Game.time <= max_date,
-                    )
-                    .order_by(PlayerGame.id.desc())
-                    .paginate(1, 1)
-                    .get_or_none()
-                )
-                if last_match:
-                    points = last_match.points_after_match
             return 200, {
                 "uuid": str(data["uuid"]),
                 "name": data["name"],
@@ -502,7 +543,7 @@ class PlayerAPIViews(RouteDescriber):
                 "stats": {
                     "season": selected_season.name,
                     "rank": data["rank"],
-                    "points": points,
+                    "points": data["points"],
                     "total_played": int(data["total_played"]),
                     "total_wins": int(data["total_wins"]),
                     "total_losses": int(data["total_losses"]),
