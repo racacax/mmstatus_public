@@ -426,47 +426,61 @@ def get_activity_players_per_country_funcs():
     return players_per_country
 
 
-def get_activity_per_rank_distribution(min_date, _):
-    def get_condition(code, min_elo, max_elo, min_rank):
-        if min_rank:
-            condition = Player.rank <= min_rank
-        else:
-            condition = Player.rank > 10
-        condition = (Player.points >= min_elo) & (Player.points < max_elo) & condition
-        return fn.SUM(Case(None, [(condition, 1)], 0)).alias(code)
+def get_rank_distribution_func(season: Season):
+    def get_activity_per_rank_distribution(min_date, _):
+        def get_condition(code, min_elo, max_elo, min_rank):
+            if min_rank:
+                condition = Player.rank <= min_rank
+            else:
+                condition = Player.rank > 10
+            condition = (Player.points >= min_elo) & (Player.points < max_elo) & condition
+            return fn.SUM(Case(None, [(condition, 1)], 0)).alias(code)
 
-    conditions = []
-    for i in range(len(RANKS) - 1, -1, -1):
-        if i != 0:
-            max_elo = RANKS[i - 1]["min_elo"]
-        else:
-            max_elo = 99999999
-        conditions.append(get_condition(RANKS[i]["key"], RANKS[i]["min_elo"], max_elo, RANKS[i]["min_rank"]))
-    players = (
-        Player.select(*conditions)
-        .join(Game)
-        .where(
-            Game.time >= min_date,
+        conditions = []
+        for i in range(len(RANKS) - 1, -1, -1):
+            if i != 0:
+                max_elo = RANKS[i - 1]["min_elo"]
+            else:
+                max_elo = 99999999
+            conditions.append(get_condition(RANKS[i]["key"], RANKS[i]["min_elo"], max_elo, RANKS[i]["min_rank"]))
+        players = (
+            Player.select(*conditions)
+            .join(Game)
+            .where(
+                Game.time >= min_date,
+            )
+            .dicts()
         )
-        .dicts()
-    )
-    season = Season.get_current_season()
-    try:
-        f = open("cache/get_activity_per_rank_distribution_" + str(season.id) + ".txt", "r")
-        j = json.loads(f.read())
-        f.close()
-    except FileNotFoundError:
-        j = {"results": [], "last_updated": 0}
-    if len(j) == 0 or j["last_updated"] < (datetime.now() - timedelta(hours=12)).timestamp():
-        d = players[0]
-        d["date"] = datetime.now().timestamp()
-        j["last_updated"] = d["date"]
-        j["results"].append(d)
+        try:
+            f = open("cache/get_activity_per_rank_distribution_" + str(season.id) + ".txt", "r")
+            j = json.loads(f.read())
+            f.close()
+        except FileNotFoundError:
+            j = {"results": [], "last_updated": 0}
+        if len(j) == 0 or j["last_updated"] < (datetime.now() - timedelta(hours=12)).timestamp():
+            d = players[0]
+            d["date"] = datetime.now().timestamp()
+            j["last_updated"] = d["date"]
+            j["results"].append(d)
 
-    return json.dumps(
-        j,
-        cls=CustomJSONEncoder,
-    )
+        return json.dumps(
+            j,
+            cls=CustomJSONEncoder,
+        )
+
+    get_activity_per_rank_distribution.__name__ = "get_activity_per_rank_distribution"
+    return get_activity_per_rank_distribution
+
+
+def get_seasons_to_update() -> list:
+    """Return seasons that need a big-queries refresh.
+
+    Includes the current active season and any season that ended within
+    the last 24 hours, so a season that finished a few hours before the
+    last scheduled run still gets a final refresh.
+    """
+    cutoff = datetime.now() - timedelta(hours=24)
+    return list(Season.select().where(Season.end_time >= cutoff).order_by(Season.end_time.desc()))
 
 
 class UpdateBigQueriesThread(AbstractThread):
@@ -481,7 +495,7 @@ class UpdateBigQueriesThread(AbstractThread):
             *get_leaderboards_funcs(season and season.id or 1),
             get_maps_statistics,
             get_top_100_per_country_func(self.path, season),
-            get_activity_per_rank_distribution,
+            get_rank_distribution_func(season),
             *get_activity_per_country_funcs(),
             *get_activity_players_per_country_funcs(),
             *get_activity_hours_countries_funcs(),
@@ -505,16 +519,17 @@ class UpdateBigQueriesThread(AbstractThread):
             )
 
     def run_iteration(self):
-        season = Season.get_current_season()
-
-        queries = self.get_queries(season)
-        for q in queries:
-            self.run_query(q, season)
-            logger.info("Waiting 60s before running new query...")
-            time.sleep(
-                60
-            )  # since some of these query are locking the whole database, we add gaps between queries to allow other
-            # normal threads to work again
+        seasons = get_seasons_to_update()
+        for season in seasons:
+            logger.info(f"Running big queries for season {season.id} ({season.name})")
+            queries = self.get_queries(season)
+            for q in queries:
+                self.run_query(q, season)
+                logger.info("Waiting 60s before running new query...")
+                time.sleep(
+                    60
+                )  # since some of these queries are locking the whole database, we add gaps between queries to allow
+                # other normal threads to work again
 
     def handle(self):
         while True:
