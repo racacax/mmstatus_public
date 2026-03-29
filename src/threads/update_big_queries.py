@@ -2,6 +2,7 @@ import json
 import os
 import time
 import traceback
+from collections import defaultdict
 from datetime import datetime, time as time2, timedelta
 from typing import Callable
 
@@ -231,6 +232,84 @@ def get_activity_per_hour(min_elo, min_date, max_date):
     )
 
 
+def get_activity_per_day_of_the_week(min_elo, min_date, max_date):
+    # DAYOFWEEK() returns 1=Sunday … 7=Saturday; subtract 1 for 0-indexed keys
+    # COALESCE handles the case where the WHERE clause filters all rows (SUM returns NULL)
+    def get_condition(day):
+        return fn.COALESCE(fn.SUM(Case(None, [(fn.DAYOFWEEK(Game.time) == day + 1, 1)], 0)), 0).alias(str(day))
+
+    conditions = [get_condition(i) for i in range(7)]
+    games = (
+        Game.select(*conditions)
+        .where(
+            Game.average_elo > -1,
+            Game.min_elo >= min_elo,
+            Game.time >= min_date,
+            Game.time <= max_date,
+        )
+        .dicts()
+    )
+    return json.dumps(
+        {"results": games[0], "last_updated": datetime.now().timestamp()},
+        cls=CustomJSONEncoder,
+    )
+
+
+def get_activity_heatmap(min_elo, min_date, max_date):
+    day = (fn.DAYOFWEEK(Game.time) - 1).alias("day")
+    hour = fn.HOUR(Game.time).alias("hour")
+    count = fn.COUNT(Game.id).alias("count")
+    query = (
+        Game.select(day, hour, count)
+        .where(
+            Game.average_elo > -1,
+            Game.min_elo >= min_elo,
+            Game.time >= min_date,
+            Game.time <= max_date,
+        )
+        .group_by(fn.DAYOFWEEK(Game.time), fn.HOUR(Game.time))
+        .order_by(fn.DAYOFWEEK(Game.time), fn.HOUR(Game.time))
+        .dicts()
+    )
+    return json.dumps(
+        {
+            "results": [{"day": r["day"], "hour": r["hour"], "count": r["count"]} for r in query],
+            "last_updated": datetime.now().timestamp(),
+        },
+        cls=CustomJSONEncoder,
+    )
+
+
+def get_activity_heatmap_funcs():
+    funcs = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_activity_heatmap(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_activity_heatmap_" + str(min_elo)
+            return my_func
+
+        funcs.append(parent_func(rank["min_elo"]))
+    return funcs
+
+
+def get_activity_day_of_the_week_funcs():
+    activity_per_day_of_the_week = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_activity_per_day_of_the_week(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_activity_per_day_of_the_week_" + str(min_elo)
+            return my_func
+
+        activity_per_day_of_the_week.append(parent_func(rank["min_elo"]))
+    return activity_per_day_of_the_week
+
+
 def get_activity_hours_funcs():
     activity_per_hours = []
     for rank in RANKS:
@@ -371,6 +450,91 @@ def get_activity_players_per_country(min_elo, min_rank, min_date):
     )
 
 
+H2H_ELOS = [3000, 3300, 3600, 4000]
+
+
+def get_country_h2h_func(path, season, min_elo):
+    def get_country_h2h(min_date, max_date):
+        season_path = f"{path}country_h2h_{min_elo}/{season.id}/"
+        if not os.path.exists(season_path):
+            os.makedirs(season_path)
+
+        pg1 = PlayerGame.alias()
+        pg2 = PlayerGame.alias()
+        p1 = Player.alias()
+        p2 = Player.alias()
+        z1 = Zone.alias()
+        z2 = Zone.alias()
+
+        wins_expr = fn.COUNT(fn.DISTINCT(Case(None, ((pg1.is_win == 1, Game.id),), None))).alias("wins")
+
+        query = (
+            Game.select(
+                z1.country_alpha3.alias("country_a"),
+                z2.country_alpha3.alias("country_b"),
+                wins_expr,
+                fn.COUNT(fn.DISTINCT(Game.id)).alias("games"),
+            )
+            .join(pg1, on=(pg1.game_id == Game.id))
+            .join(p1, on=(p1.uuid == pg1.player_id))
+            .join(z1, on=((z1.id == p1.country_id) & (z1.country_alpha3.is_null(False))))
+            .switch(Game)
+            .join(pg2, on=((pg2.game_id == Game.id) & (pg2.player_id != pg1.player_id)))
+            .join(p2, on=(p2.uuid == pg2.player_id))
+            .join(
+                z2,
+                on=(
+                    (z2.id == p2.country_id)
+                    & (z2.country_alpha3.is_null(False))
+                    & (z2.country_alpha3 != z1.country_alpha3)
+                ),
+            )
+            .where(
+                (Game.average_elo > -1)
+                & (Game.is_finished == True)
+                & (Game.min_elo >= min_elo)
+                & (Game.time >= min_date)
+                & (Game.time <= max_date)
+            )
+            .group_by(z1.country_alpha3, z2.country_alpha3)
+        )
+        rows = list(query.dicts())
+
+        by_country = defaultdict(list)
+        for row in rows:
+            wins = int(row["wins"] or 0)
+            games = int(row["games"] or 0)
+            by_country[row["country_a"]].append(
+                {
+                    "opponent": row["country_b"],
+                    "wins": wins,
+                    "losses": games - wins,
+                    "games": games,
+                }
+            )
+
+        countries_written = []
+        for country_a, records in by_country.items():
+            records.sort(key=lambda r: r["games"], reverse=True)
+            with open(season_path + country_a + ".txt", "w") as f:
+                f.write(
+                    json.dumps(
+                        {"results": records, "last_updated": datetime.now().timestamp()},
+                        cls=CustomJSONEncoder,
+                    )
+                )
+            countries_written.append(country_a)
+
+        return json.dumps({"countries": sorted(countries_written), "last_updated": datetime.now().timestamp()})
+
+    get_country_h2h.__name__ = f"get_country_h2h_{min_elo}"
+    return get_country_h2h
+
+
+def get_country_h2h_funcs(path, season):
+    return [get_country_h2h_func(path, season, min_elo) for min_elo in H2H_ELOS]
+
+
 def get_top_100_per_country_func(path, season):
     def get_top_100_per_country_0(_, __):
         countries = Zone.select().where(Zone.country_alpha3 != None)
@@ -472,6 +636,131 @@ def get_rank_distribution_func(season: Season):
     return get_activity_per_rank_distribution
 
 
+def get_player_retention(min_elo, min_date, max_date):
+    """
+    For each complete week-pair (N, N+1) within the season window, compute:
+      - total_players : distinct players who played at least once in week N
+      - retained_players : how many of those also played in week N+1
+      - retention_rate : retained / total * 100
+
+    Optimization: one SQL query fetches every distinct (player_uuid, week_number)
+    pair; all set-intersection logic runs in Python — no per-week subqueries.
+    """
+    week_expr = fn.FLOOR(fn.DATEDIFF(Game.time, min_date) / 7)
+
+    # Drive from game (range scan on time index) → playergame (game_id FK lookup).
+    # No join to player needed: playergame.player_id already holds the UUID.
+    rows = (
+        Game.select(
+            PlayerGame.player_id.alias("player_id"),
+            week_expr.alias("week_num"),
+        )
+        .join(PlayerGame)
+        .where(
+            Game.average_elo > -1,
+            Game.min_elo >= min_elo,
+            Game.time >= min_date,
+            Game.time <= max_date,
+        )
+        .group_by(PlayerGame.player_id, week_expr)
+        .dicts()
+    )
+
+    weeks: dict[int, set] = defaultdict(set)
+    for row in rows:
+        weeks[int(row["week_num"])].add(row["player_id"])
+
+    results = []
+    for n in sorted(weeks.keys()):
+        if n + 1 not in weeks:
+            continue  # no data for the following week yet
+        total = len(weeks[n])
+        retained = len(weeks[n] & weeks[n + 1])
+        results.append(
+            {
+                "week": n,
+                "week_start": (min_date + timedelta(weeks=n)).timestamp(),
+                "total_players": total,
+                "retained_players": retained,
+                "retention_rate": round(retained * 100 / total, 2) if total > 0 else 0.0,
+            }
+        )
+
+    return json.dumps(
+        {"results": results, "last_updated": datetime.now().timestamp()},
+        cls=CustomJSONEncoder,
+    )
+
+
+def get_player_retention_funcs():
+    funcs = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_player_retention(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_player_retention_" + str(min_elo)
+            return my_func
+
+        funcs.append(parent_func(rank["min_elo"]))
+    return funcs
+
+
+def get_hot_this_week(min_elo, _min_date, _max_date):
+    start = datetime.now() - timedelta(days=7)
+    wins = fn.SUM(PlayerGame.is_win)
+    played = fn.COUNT(PlayerGame.id)
+    query = (
+        Game.select(
+            Player.name,
+            Player.uuid,
+            Player.club_tag,
+            wins.alias("wins"),
+            played.alias("played"),
+        )
+        .join(PlayerGame)
+        .switch(Game)
+        .join(Player, on=(Player.uuid == PlayerGame.player_id))
+        .where(
+            Game.average_elo > -1,
+            Game.min_elo >= min_elo,
+            Game.time >= start,
+        )
+        .group_by(Player.uuid)
+        .order_by(wins.desc())
+        .paginate(1, 20)
+        .dicts()
+    )
+    data = []
+    for q in query:
+        data.append(
+            {
+                "name": q["name"],
+                "uuid": str(q["uuid"]),
+                "club_tag": q["club_tag"],
+                "wins": int(q["wins"] or 0),
+                "played": int(q["played"] or 0),
+            }
+        )
+    return json.dumps({"last_updated": datetime.now().timestamp(), "results": data})
+
+
+def get_hot_this_week_funcs():
+    funcs = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_hot_this_week(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_hot_this_week_" + str(min_elo)
+            return my_func
+
+        funcs.append(parent_func(rank["min_elo"]))
+    return funcs
+
+
 def get_seasons_to_update() -> list:
     """Return seasons that need a big-queries refresh.
 
@@ -495,11 +784,16 @@ class UpdateBigQueriesThread(AbstractThread):
             *get_leaderboards_funcs(season and season.id or 1),
             get_maps_statistics,
             get_top_100_per_country_func(self.path, season),
+            *get_country_h2h_funcs(self.path, season),
             get_rank_distribution_func(season),
             *get_activity_per_country_funcs(),
             *get_activity_players_per_country_funcs(),
             *get_activity_hours_countries_funcs(),
             *get_activity_hours_funcs(),
+            *get_activity_heatmap_funcs(),
+            *get_activity_day_of_the_week_funcs(),
+            *get_player_retention_funcs(),
+            *get_hot_this_week_funcs(),
             *get_players_matches_funcs(),
         ]
 
@@ -525,9 +819,9 @@ class UpdateBigQueriesThread(AbstractThread):
             queries = self.get_queries(season)
             for q in queries:
                 self.run_query(q, season)
-                logger.info("Waiting 60s before running new query...")
+                logger.info("Waiting 20s before running new query...")
                 time.sleep(
-                    60
+                    20
                 )  # since some of these queries are locking the whole database, we add gaps between queries to allow
                 # other normal threads to work again
 

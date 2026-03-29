@@ -189,11 +189,15 @@ class APIViews(RouteDescriber):
             enum=[
                 "activity_per_country",
                 "activity_per_hour",
+                "activity_per_day_of_the_week",
                 "activity_per_country_and_hour",
                 "players_per_country",
                 "rank_distribution",
                 "top_100_per_country",
                 "maps_statistics",
+                "player_retention",
+                "hot_this_week",
+                "activity_heatmap",
             ],
         ) = "activity_per_country",
         season: Option(
@@ -213,6 +217,7 @@ class APIViews(RouteDescriber):
         if metric not in [
             "activity_per_country",
             "activity_per_hour",
+            "activity_per_day_of_the_week",
             "activity_per_country_and_hour",
             "players_per_country",
             "activity_per_players_per_country",
@@ -221,6 +226,9 @@ class APIViews(RouteDescriber):
             "maps_statistics",
             "countries_leaderboard",
             "clubs_leaderboard",
+            "player_retention",
+            "hot_this_week",
+            "activity_heatmap",
         ]:
             return 404, {"message": f"'{metric}' metric doesn't exist."}
         if metric not in [
@@ -286,6 +294,40 @@ class APIViews(RouteDescriber):
         f.close()
 
         return 200, json.loads(content)
+
+    @staticmethod
+    @route(
+        name="country_h2h",
+        summary="Country head-to-head records",
+        description="Win/loss records for a given country against all others."
+        "Only available for Master I+ games (3000+ elo).",
+    )
+    def get_country_h2h(
+        country: Option(
+            str,
+            description="ISO-3166-alpha3 country code (e.g. FRA)",
+        ) = "FRA",
+        min_elo: Option(
+            int,
+            description="Minimum elo filter",
+            enum=[3000, 3300, 3600, 4000],
+        ) = 3000,
+        season: Option(
+            int,
+            description="ID representing a season (provided by the seasons endpoint)",
+            formatted_default="<current season>",
+        ) = -1,
+    ):
+        if season == -1:
+            season = Season.get_current_season().id
+        if min_elo not in [3000, 3300, 3600, 4000]:
+            return 404, {"message": f"min_elo '{min_elo}' is not valid for this endpoint."}
+        formatted_country = country.replace("/", "").replace("\\", "").replace("~", "")
+        try:
+            with open(f"cache/country_h2h_{min_elo}/{season}/{formatted_country}.txt", "r") as f:
+                return 200, json.loads(f.read())
+        except FileNotFoundError:
+            return 404, {"message": f"No data found for country '{country}'."}
 
     @staticmethod
     @route(

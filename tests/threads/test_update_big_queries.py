@@ -1,14 +1,28 @@
+import json
 import time as time_module
 from datetime import datetime, timedelta
 
+import pytest
 
-from models import Season
+from models import Game, Map, Player, PlayerGame, Season, Zone
 from scripts.recompute_big_queries import recompute
 from src.threads.update_big_queries import (
+    H2H_ELOS,
     UpdateBigQueriesThread,
+    get_activity_day_of_the_week_funcs,
+    get_activity_heatmap,
+    get_activity_heatmap_funcs,
+    get_activity_per_day_of_the_week,
+    get_country_h2h_func,
+    get_country_h2h_funcs,
+    get_hot_this_week,
+    get_hot_this_week_funcs,
+    get_player_retention,
+    get_player_retention_funcs,
     get_rank_distribution_func,
     get_seasons_to_update,
 )
+from src.utils import RANKS
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -332,3 +346,1268 @@ class TestRecomputeScript:
         self._mock_run_query(monkeypatch)
         recompute([s.id])
         assert slept[0] is False
+
+
+# ── get_activity_per_day_of_the_week ──────────────────────────────────────────
+
+# Known dates — all in the same week for easy day-of-week assertions:
+#   2024-01-07 = Sunday    → key "0"  (DAYOFWEEK 1 - 1)
+#   2024-01-08 = Monday    → key "1"
+#   2024-01-09 = Tuesday   → key "2"
+#   2024-01-10 = Wednesday → key "3"
+#   2024-01-11 = Thursday  → key "4"
+#   2024-01-12 = Friday    → key "5"
+#   2024-01-13 = Saturday  → key "6"
+
+DOW_DATES = {
+    "0": datetime(2024, 1, 7, 12, 0, 0),  # Sunday
+    "1": datetime(2024, 1, 8, 12, 0, 0),  # Monday
+    "2": datetime(2024, 1, 9, 12, 0, 0),  # Tuesday
+    "3": datetime(2024, 1, 10, 12, 0, 0),  # Wednesday
+    "4": datetime(2024, 1, 11, 12, 0, 0),  # Thursday
+    "5": datetime(2024, 1, 12, 12, 0, 0),  # Friday
+    "6": datetime(2024, 1, 13, 12, 0, 0),  # Saturday
+}
+
+WINDOW_START = datetime(2024, 1, 1)
+WINDOW_END = datetime(2024, 12, 31)
+
+
+class TestGetActivityPerDayOfTheWeek:
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="DOW_TEST_MAP", name="DoW Test Map")
+
+    def _game(self, map_obj, time, min_elo=1000, average_elo=1000):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=time,
+            min_elo=min_elo,
+            average_elo=average_elo,
+        )
+
+    def _call(self, min_elo=0, min_date=WINDOW_START, max_date=WINDOW_END):
+        return json.loads(get_activity_per_day_of_the_week(min_elo, min_date, max_date))
+
+    # ── shape ─────────────────────────────────────────────────────────────────
+
+    def test_results_has_exactly_seven_keys(self, map_obj):
+        self._game(map_obj, DOW_DATES["0"])
+        data = self._call()
+        assert set(data["results"].keys()) == {"0", "1", "2", "3", "4", "5", "6"}
+
+    def test_returns_seven_keys_even_with_no_games(self):
+        data = self._call()
+        assert set(data["results"].keys()) == {"0", "1", "2", "3", "4", "5", "6"}
+
+    def test_has_last_updated_timestamp(self, map_obj):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    # ── day encoding (DAYOFWEEK() - 1) ───────────────────────────────────────
+
+    def test_sunday_counted_in_key_zero(self, map_obj):
+        self._game(map_obj, DOW_DATES["0"])
+        data = self._call()
+        assert data["results"]["0"] == 1
+
+    def test_monday_counted_in_key_one(self, map_obj):
+        self._game(map_obj, DOW_DATES["1"])
+        data = self._call()
+        assert data["results"]["1"] == 1
+
+    def test_saturday_counted_in_key_six(self, map_obj):
+        self._game(map_obj, DOW_DATES["6"])
+        data = self._call()
+        assert data["results"]["6"] == 1
+
+    def test_all_seven_days_counted_correctly(self, map_obj):
+        for dt in DOW_DATES.values():
+            self._game(map_obj, dt)
+        data = self._call()
+        for key in "0123456":
+            assert data["results"][key] == 1
+
+    # ── aggregation ───────────────────────────────────────────────────────────
+
+    def test_multiple_games_same_day_are_summed(self, map_obj):
+        for _ in range(4):
+            self._game(map_obj, DOW_DATES["0"])  # 4 Sunday games
+        data = self._call()
+        assert data["results"]["0"] == 4
+
+    def test_games_on_different_days_counted_independently(self, map_obj):
+        self._game(map_obj, DOW_DATES["0"])
+        self._game(map_obj, DOW_DATES["0"])
+        self._game(map_obj, DOW_DATES["3"])
+        data = self._call()
+        assert data["results"]["0"] == 2
+        assert data["results"]["3"] == 1
+
+    def test_days_with_no_games_return_zero(self, map_obj):
+        self._game(map_obj, DOW_DATES["1"])  # only Monday
+        data = self._call()
+        for key in ["0", "2", "3", "4", "5", "6"]:
+            assert data["results"][key] == 0
+
+    def test_same_day_across_two_weeks_summed(self, map_obj):
+        # Two Sundays two weeks apart → both land on key "0"
+        self._game(map_obj, datetime(2024, 1, 7, 12, 0))
+        self._game(map_obj, datetime(2024, 1, 14, 12, 0))
+        data = self._call()
+        assert data["results"]["0"] == 2
+
+    # ── min_elo filter ────────────────────────────────────────────────────────
+
+    def test_game_below_min_elo_excluded(self, map_obj):
+        self._game(map_obj, DOW_DATES["0"], min_elo=500)  # below threshold
+        self._game(map_obj, DOW_DATES["1"], min_elo=1000)  # above threshold
+        data = self._call(min_elo=1000)
+        assert data["results"]["0"] == 0
+        assert data["results"]["1"] == 1
+
+    def test_game_at_exact_min_elo_threshold_included(self, map_obj):
+        self._game(map_obj, DOW_DATES["2"], min_elo=1000)
+        data = self._call(min_elo=1000)
+        assert data["results"]["2"] == 1
+
+    def test_game_one_below_min_elo_excluded(self, map_obj):
+        self._game(map_obj, DOW_DATES["2"], min_elo=999)
+        data = self._call(min_elo=1000)
+        assert data["results"]["2"] == 0
+
+    def test_min_elo_zero_includes_all_games(self, map_obj):
+        for dt in DOW_DATES.values():
+            self._game(map_obj, dt, min_elo=0)
+        data = self._call(min_elo=0)
+        for key in "0123456":
+            assert data["results"][key] == 1
+
+    # ── average_elo filter ────────────────────────────────────────────────────
+
+    def test_game_with_average_elo_minus_one_excluded(self, map_obj):
+        self._game(map_obj, DOW_DATES["0"], average_elo=-1)  # unprocessed, must be excluded
+        self._game(map_obj, DOW_DATES["1"], average_elo=1000)
+        data = self._call()
+        assert data["results"]["0"] == 0
+        assert data["results"]["1"] == 1
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_game_before_min_date_excluded(self, map_obj):
+        self._game(map_obj, DOW_DATES["0"])  # 2024-01-07
+        min_date = datetime(2024, 1, 8)
+        data = self._call(min_date=min_date)
+        assert data["results"]["0"] == 0
+
+    def test_game_after_max_date_excluded(self, map_obj):
+        self._game(map_obj, DOW_DATES["6"])  # 2024-01-13
+        max_date = datetime(2024, 1, 12)
+        data = self._call(max_date=max_date)
+        assert data["results"]["6"] == 0
+
+    def test_only_games_inside_date_window_counted(self, map_obj):
+        self._game(map_obj, datetime(2024, 1, 6, 12))  # Saturday, before window
+        self._game(map_obj, datetime(2024, 1, 8, 12))  # Monday, inside window
+        self._game(map_obj, datetime(2024, 1, 14, 12))  # Sunday, after window
+        min_date = datetime(2024, 1, 7)
+        max_date = datetime(2024, 1, 13, 23, 59)
+        data = self._call(min_date=min_date, max_date=max_date)
+        assert data["results"]["1"] == 1  # Monday inside
+        assert data["results"]["0"] == 0  # Sunday (Jan 14) outside
+        assert data["results"]["6"] == 0  # Saturday (Jan 6) outside
+
+
+# ── get_activity_day_of_the_week_funcs ────────────────────────────────────────
+
+
+class TestGetActivityDayOfTheWeekFuncs:
+
+    def test_returns_one_function_per_rank(self):
+        funcs = get_activity_day_of_the_week_funcs()
+        assert len(funcs) == len(RANKS)
+
+    def test_each_function_is_callable(self):
+        for func in get_activity_day_of_the_week_funcs():
+            assert callable(func)
+
+    def test_each_function_has_correct_name(self):
+        funcs = get_activity_day_of_the_week_funcs()
+        for func, rank in zip(funcs, RANKS):
+            assert func.__name__ == f"get_activity_per_day_of_the_week_{rank['min_elo']}"
+
+    def test_function_names_are_unique(self):
+        funcs = get_activity_day_of_the_week_funcs()
+        names = [f.__name__ for f in funcs]
+        assert len(names) == len(set(names))
+
+    def test_each_function_captures_correct_min_elo(self, monkeypatch):
+        """Verify closure binding: each function passes its own min_elo to the query."""
+        captured = []
+
+        def fake_query(min_elo, min_date, max_date):
+            captured.append(min_elo)
+            return json.dumps({"results": {str(i): 0 for i in range(7)}, "last_updated": 0})
+
+        import src.threads.update_big_queries as ubq
+
+        monkeypatch.setattr(ubq, "get_activity_per_day_of_the_week", fake_query)
+
+        # Re-build the funcs after the monkeypatch so closures reference the patched name
+        funcs = get_activity_day_of_the_week_funcs()
+        for func in funcs:
+            func(datetime(2024, 1, 1), datetime(2024, 12, 31))
+
+        expected_elos = [rank["min_elo"] for rank in RANKS]
+        assert captured == expected_elos
+
+
+# ── registration in get_queries ───────────────────────────────────────────────
+
+
+class TestActivityDayOfTheWeekRegistration:
+
+    def test_all_rank_functions_registered_in_get_queries(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        thread = UpdateBigQueriesThread()
+        names = {q.__name__ for q in thread.get_queries(s)}
+        for rank in RANKS:
+            assert f"get_activity_per_day_of_the_week_{rank['min_elo']}" in names
+
+    def test_registered_count_matches_number_of_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        thread = UpdateBigQueriesThread()
+        names = [q.__name__ for q in thread.get_queries(s)]
+        dow_names = [n for n in names if n.startswith("get_activity_per_day_of_the_week_")]
+        assert len(dow_names) == len(RANKS)
+
+
+# ── get_player_retention ──────────────────────────────────────────────────────
+#
+# Week numbering: FLOOR(DATEDIFF(game.time, min_date) / 7)
+#   week 0 = days 0-6 from min_date
+#   week 1 = days 7-13, etc.
+#
+# The first result entry appears once both week 0 and week 1 have data.
+# The last week in the season is always skipped (no following week to compare).
+
+
+class TestGetPlayerRetention:
+    # Anchor date — all test games are placed relative to this
+    BASE = datetime(2024, 1, 1, 12, 0, 0)
+    WINDOW_END = datetime(2024, 12, 31)
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="RETENTION_TEST_MAP", name="Retention Map")
+
+    @pytest.fixture
+    def player_a(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000001"), name="PlayerA")
+
+    @pytest.fixture
+    def player_b(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000002"), name="PlayerB")
+
+    @pytest.fixture
+    def player_c(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000003"), name="PlayerC")
+
+    def _game(self, map_obj, days_offset, min_elo=1000, average_elo=1000):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.BASE + timedelta(days=days_offset),
+            min_elo=min_elo,
+            average_elo=average_elo,
+        )
+
+    def _pg(self, player, game):
+        return PlayerGame.create(player=player, game=game)
+
+    def _call(self, min_elo=0, min_date=None, max_date=None):
+        return json.loads(
+            get_player_retention(
+                min_elo,
+                min_date or self.BASE,
+                max_date or self.WINDOW_END,
+            )
+        )
+
+    def _week(self, data, n):
+        return next((r for r in data["results"] if r["week"] == n), None)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_empty_results_with_no_games(self):
+        data = self._call()
+        assert data["results"] == []
+
+    def test_has_last_updated(self):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_single_week_produces_no_results(self, map_obj, player_a):
+        # All games in week 0 only — no week 1 to compare to
+        self._pg(player_a, self._game(map_obj, days_offset=0))
+        self._pg(player_a, self._game(map_obj, days_offset=3))
+        data = self._call()
+        assert data["results"] == []
+
+    def test_result_row_has_expected_keys(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, days_offset=0))  # week 0
+        self._pg(player_a, self._game(map_obj, days_offset=7))  # week 1
+        data = self._call()
+        row = data["results"][0]
+        assert set(row.keys()) == {"week", "week_start", "total_players", "retained_players", "retention_rate"}
+
+    # ── week numbering ────────────────────────────────────────────────────────
+
+    def test_days_0_to_6_are_week_zero(self, map_obj, player_a, player_b):
+        # player_a plays on day 0 and day 6 (both week 0)
+        # player_b plays on day 7 (week 1) to give a comparison target
+        self._pg(player_a, self._game(map_obj, days_offset=0))
+        self._pg(player_a, self._game(map_obj, days_offset=6))
+        self._pg(player_b, self._game(map_obj, days_offset=7))
+        data = self._call()
+        w0 = self._week(data, 0)
+        assert w0 is not None
+        assert w0["total_players"] == 1  # only player_a in week 0
+
+    def test_day_7_is_week_one(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, days_offset=0))  # week 0
+        self._pg(player_b, self._game(map_obj, days_offset=7))  # week 1
+        self._pg(player_b, self._game(map_obj, days_offset=14))  # week 2 (to make week 1 show up)
+        data = self._call()
+        w1 = self._week(data, 1)
+        assert w1 is not None
+        assert w1["total_players"] == 1  # only player_b in week 1
+
+    # ── retention counting ────────────────────────────────────────────────────
+
+    def test_full_retention_when_all_players_return(self, map_obj, player_a, player_b):
+        # Both players in week 0 and week 1
+        for p in [player_a, player_b]:
+            self._pg(p, self._game(map_obj, days_offset=0))
+            self._pg(p, self._game(map_obj, days_offset=7))
+        data = self._call()
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 2
+        assert w0["retained_players"] == 2
+        assert w0["retention_rate"] == 100.0
+
+    def test_zero_retention_when_no_players_return(self, map_obj, player_a, player_b):
+        # player_a in week 0, player_b in week 1 (no overlap)
+        self._pg(player_a, self._game(map_obj, days_offset=0))
+        self._pg(player_b, self._game(map_obj, days_offset=7))
+        data = self._call()
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 1
+        assert w0["retained_players"] == 0
+        assert w0["retention_rate"] == 0.0
+
+    def test_partial_retention(self, map_obj, player_a, player_b, player_c):
+        # All 3 play week 0; only player_a and player_b return for week 1
+        for p in [player_a, player_b, player_c]:
+            self._pg(p, self._game(map_obj, days_offset=0))
+        for p in [player_a, player_b]:
+            self._pg(p, self._game(map_obj, days_offset=7))
+        data = self._call()
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 3
+        assert w0["retained_players"] == 2
+        assert abs(w0["retention_rate"] - 66.67) < 0.01
+
+    def test_multiple_games_same_week_count_player_once(self, map_obj, player_a, player_b):
+        # player_a plays 5 times in week 0 — should still count as 1 player
+        for day in [0, 1, 2, 3, 4]:
+            self._pg(player_a, self._game(map_obj, days_offset=day))
+        self._pg(player_b, self._game(map_obj, days_offset=7))  # week 1
+        data = self._call()
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 1
+
+    # ── multi-week series ─────────────────────────────────────────────────────
+
+    def test_each_week_pair_produces_independent_result(self, map_obj, player_a, player_b, player_c):
+        # week 0: A, B — week 1: A, C — week 2: B, C
+        self._pg(player_a, self._game(map_obj, days_offset=0))
+        self._pg(player_b, self._game(map_obj, days_offset=0))
+        self._pg(player_a, self._game(map_obj, days_offset=7))
+        self._pg(player_c, self._game(map_obj, days_offset=7))
+        self._pg(player_b, self._game(map_obj, days_offset=14))
+        self._pg(player_c, self._game(map_obj, days_offset=14))
+        data = self._call()
+        w0 = self._week(data, 0)
+        w1 = self._week(data, 1)
+        # week 0→1: A and B in w0; only A in w1 → 1/2 retained
+        assert w0["total_players"] == 2
+        assert w0["retained_players"] == 1
+        # week 1→2: A and C in w1; only C in w2 → 1/2 retained
+        assert w1["total_players"] == 2
+        assert w1["retained_players"] == 1
+
+    def test_last_week_not_included_when_no_following_week(self, map_obj, player_a):
+        # Only week 0 and week 1 data → week 0 shows up, week 1 does not
+        self._pg(player_a, self._game(map_obj, days_offset=0))
+        self._pg(player_a, self._game(map_obj, days_offset=7))
+        data = self._call()
+        assert self._week(data, 0) is not None
+        assert self._week(data, 1) is None
+
+    def test_week_start_timestamp_is_correct(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, days_offset=0))
+        self._pg(player_b, self._game(map_obj, days_offset=7))
+        data = self._call()
+        w0 = self._week(data, 0)
+        expected_ts = self.BASE.timestamp()
+        assert abs(w0["week_start"] - expected_ts) < 1
+
+    # ── min_elo filter ────────────────────────────────────────────────────────
+
+    def test_game_below_min_elo_excluded_from_both_weeks(self, map_obj, player_a, player_b):
+        # player_a plays low-elo game in week 0; player_b plays qualifying game in both weeks
+        self._pg(player_a, self._game(map_obj, days_offset=0, min_elo=500))  # excluded
+        self._pg(player_b, self._game(map_obj, days_offset=0, min_elo=1000))  # included
+        self._pg(player_b, self._game(map_obj, days_offset=7, min_elo=1000))  # included
+        data = self._call(min_elo=1000)
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 1  # player_a not counted
+        assert w0["retained_players"] == 1
+
+    def test_player_counts_if_any_qualifying_game_in_week(self, map_obj, player_a, player_b):
+        # player_a has one low-elo and one qualifying game in week 0 → still counted
+        self._pg(player_a, self._game(map_obj, days_offset=0, min_elo=500))  # excluded
+        self._pg(player_a, self._game(map_obj, days_offset=2, min_elo=1000))  # qualifies
+        self._pg(player_b, self._game(map_obj, days_offset=7, min_elo=1000))  # week 1
+        data = self._call(min_elo=1000)
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 1  # player_a counted via qualifying game
+
+    # ── average_elo filter ────────────────────────────────────────────────────
+
+    def test_games_with_average_elo_minus_one_excluded(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, days_offset=0, average_elo=-1))  # unprocessed
+        self._pg(player_b, self._game(map_obj, days_offset=0, average_elo=1000))
+        self._pg(player_b, self._game(map_obj, days_offset=7, average_elo=1000))
+        data = self._call()
+        w0 = self._week(data, 0)
+        assert w0["total_players"] == 1  # player_a excluded
+
+
+# ── get_player_retention_funcs ────────────────────────────────────────────────
+
+
+class TestGetPlayerRetentionFuncs:
+
+    def test_returns_one_function_per_rank(self):
+        assert len(get_player_retention_funcs()) == len(RANKS)
+
+    def test_each_function_has_correct_name(self):
+        for func, rank in zip(get_player_retention_funcs(), RANKS):
+            assert func.__name__ == f"get_player_retention_{rank['min_elo']}"
+
+    def test_function_names_are_unique(self):
+        names = [f.__name__ for f in get_player_retention_funcs()]
+        assert len(names) == len(set(names))
+
+    def test_each_function_captures_correct_min_elo(self, monkeypatch):
+        captured = []
+
+        def fake_retention(min_elo, min_date, max_date):
+            captured.append(min_elo)
+            return json.dumps({"results": [], "last_updated": 0})
+
+        import src.threads.update_big_queries as ubq
+
+        monkeypatch.setattr(ubq, "get_player_retention", fake_retention)
+
+        funcs = get_player_retention_funcs()
+        for func in funcs:
+            func(datetime(2024, 1, 1), datetime(2024, 12, 31))
+
+        assert captured == [rank["min_elo"] for rank in RANKS]
+
+
+# ── registration in get_queries ───────────────────────────────────────────────
+
+
+class TestPlayerRetentionRegistration:
+
+    def test_all_rank_functions_registered_in_get_queries(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
+        for rank in RANKS:
+            assert f"get_player_retention_{rank['min_elo']}" in names
+
+    def test_registered_count_matches_number_of_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        retention_names = [n for n in names if n.startswith("get_player_retention_")]
+        assert len(retention_names) == len(RANKS)
+
+
+# ── get_hot_this_week ─────────────────────────────────────────────────────────
+#
+# Returns top 20 players by wins in the last 7 days (relative to datetime.now()).
+# Filterable by min_elo (Game.min_elo >= min_elo).
+# _min_date and _max_date are accepted but ignored.
+
+
+class TestGetHotThisWeek:
+    """Tests for get_hot_this_week()."""
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="HOT_WEEK_MAP", name="Hot Week Map")
+
+    @pytest.fixture
+    def player_a(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000011"), name="PlayerA", club_tag="TAG_A")
+
+    @pytest.fixture
+    def player_b(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000012"), name="PlayerB", club_tag="TAG_B")
+
+    @pytest.fixture
+    def player_c(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000013"), name="PlayerC", club_tag="TAG_C")
+
+    def _game(self, map_obj, days_ago=1, min_elo=0, average_elo=1000):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=datetime.now() - timedelta(days=days_ago),
+            min_elo=min_elo,
+            average_elo=average_elo,
+        )
+
+    def _pg(self, player, game, is_win=False):
+        return PlayerGame.create(player=player, game=game, is_win=is_win)
+
+    def _call(self, min_elo=0):
+        return json.loads(get_hot_this_week(min_elo, None, None))
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_empty_when_no_games(self):
+        data = self._call()
+        assert data["results"] == []
+
+    def test_has_last_updated(self):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_result_row_has_expected_keys(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, is_win=True)
+        data = self._call()
+        row = data["results"][0]
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "wins", "played"}
+
+    def test_uuid_is_string(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, is_win=True)
+        data = self._call()
+        assert isinstance(data["results"][0]["uuid"], str)
+
+    # ── ordering ──────────────────────────────────────────────────────────────
+
+    def test_ordered_by_wins_descending(self, map_obj, player_a, player_b, player_c):
+        # player_c: 3 wins, player_a: 2 wins, player_b: 1 win
+        for _ in range(3):
+            self._pg(player_c, self._game(map_obj), is_win=True)
+        for _ in range(2):
+            self._pg(player_a, self._game(map_obj), is_win=True)
+        self._pg(player_b, self._game(map_obj), is_win=True)
+        data = self._call()
+        wins = [r["wins"] for r in data["results"]]
+        assert wins == sorted(wins, reverse=True)
+        assert data["results"][0]["name"] == "PlayerC"
+
+    def test_max_20_results(self, map_obj):
+        from uuid import UUID
+
+        for i in range(25):
+            p = Player.create(uuid=UUID(f"dddddddd-0000-0000-0000-{i:012d}"), name=f"P{i}")
+            self._pg(p, self._game(map_obj), is_win=True)
+        data = self._call()
+        assert len(data["results"]) <= 20
+
+    # ── time window ───────────────────────────────────────────────────────────
+
+    def test_game_within_7_days_included(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, days_ago=6), is_win=True)
+        data = self._call()
+        assert len(data["results"]) == 1
+
+    def test_game_older_than_7_days_excluded(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, days_ago=8), is_win=True)
+        data = self._call()
+        assert data["results"] == []
+
+    def test_min_date_max_date_args_are_ignored(self, map_obj, player_a):
+        """_min_date and _max_date params have no effect on the 7-day window."""
+        g = self._game(map_obj, days_ago=1)
+        self._pg(player_a, g, is_win=True)
+        # pass far-past dates that would normally exclude this game
+        far_past = datetime(2000, 1, 1)
+        data = json.loads(get_hot_this_week(0, far_past, far_past))
+        assert len(data["results"]) == 1
+
+    # ── min_elo filter ────────────────────────────────────────────────────────
+
+    def test_game_meets_min_elo_included(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, min_elo=1000), is_win=True)
+        data = self._call(min_elo=1000)
+        assert len(data["results"]) == 1
+
+    def test_game_below_min_elo_excluded(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, min_elo=500), is_win=True)
+        data = self._call(min_elo=1000)
+        assert data["results"] == []
+
+    def test_min_elo_zero_includes_all(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, min_elo=0), is_win=True)
+        self._pg(player_b, self._game(map_obj, min_elo=5000), is_win=True)
+        data = self._call(min_elo=0)
+        names = {r["name"] for r in data["results"]}
+        assert "PlayerA" in names and "PlayerB" in names
+
+    # ── average_elo filter (invalid games excluded) ───────────────────────────
+
+    def test_game_with_average_elo_minus_1_excluded(self, map_obj, player_a):
+        g = self._game(map_obj, average_elo=-1)
+        self._pg(player_a, g, is_win=True)
+        data = self._call()
+        assert data["results"] == []
+
+    # ── wins vs played counts ─────────────────────────────────────────────────
+
+    def test_wins_and_played_counts_are_correct(self, map_obj, player_a):
+        for _ in range(3):
+            self._pg(player_a, self._game(map_obj), is_win=True)
+        for _ in range(2):
+            self._pg(player_a, self._game(map_obj), is_win=False)
+        data = self._call()
+        row = data["results"][0]
+        assert row["wins"] == 3
+        assert row["played"] == 5
+
+    def test_player_with_zero_wins_included_in_played_count(self, map_obj, player_a):
+        for _ in range(3):
+            self._pg(player_a, self._game(map_obj), is_win=False)
+        data = self._call()
+        # player_a should appear since they played
+        assert len(data["results"]) == 1
+        assert data["results"][0]["wins"] == 0
+        assert data["results"][0]["played"] == 3
+
+    # ── player isolation ──────────────────────────────────────────────────────
+
+    def test_player_isolation(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj), is_win=True)
+        self._pg(player_a, self._game(map_obj), is_win=True)
+        self._pg(player_b, self._game(map_obj), is_win=True)
+        data = self._call()
+        by_name = {r["name"]: r for r in data["results"]}
+        assert by_name["PlayerA"]["wins"] == 2
+        assert by_name["PlayerB"]["wins"] == 1
+
+    # ── club_tag ──────────────────────────────────────────────────────────────
+
+    def test_club_tag_is_returned(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj), is_win=True)
+        data = self._call()
+        assert data["results"][0]["club_tag"] == "TAG_A"
+
+
+# ── get_hot_this_week_funcs ───────────────────────────────────────────────────
+
+
+class TestGetHotThisWeekFuncs:
+
+    def test_returns_one_func_per_rank(self):
+        assert len(get_hot_this_week_funcs()) == len(RANKS)
+
+    def test_func_names_match_rank_min_elo(self):
+        for func, rank in zip(get_hot_this_week_funcs(), RANKS):
+            assert func.__name__ == f"get_hot_this_week_{rank['min_elo']}"
+
+    def test_no_late_binding_all_names_distinct(self):
+        names = [f.__name__ for f in get_hot_this_week_funcs()]
+        assert len(names) == len(set(names))
+
+    def test_func_delegates_to_get_hot_this_week(self, monkeypatch):
+        import src.threads.update_big_queries as ubq
+
+        calls = []
+
+        def fake_query(min_elo, min_date, max_date):
+            calls.append(min_elo)
+            return json.dumps({"last_updated": 0.0, "results": []})
+
+        monkeypatch.setattr(ubq, "get_hot_this_week", fake_query)
+        funcs = get_hot_this_week_funcs()
+        funcs[0](datetime.now() - timedelta(days=30), datetime.now())
+        assert calls == [RANKS[0]["min_elo"]]
+
+
+# ── get_hot_this_week registration ───────────────────────────────────────────
+
+
+class TestHotThisWeekRegistration:
+
+    def test_all_rank_functions_registered_in_get_queries(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
+        for rank in RANKS:
+            assert f"get_hot_this_week_{rank['min_elo']}" in names
+
+    def test_registered_count_matches_number_of_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        hot_names = [n for n in names if n.startswith("get_hot_this_week_")]
+        assert len(hot_names) == len(RANKS)
+
+
+# ── get_activity_heatmap ──────────────────────────────────────────────────────
+#
+# Returns sparse (day, hour, count) rows for games in the season window,
+# filtered by min_elo. 0-indexed day: 0=Sunday…6=Saturday, hour 0-23.
+# Only cells with at least one game are returned.
+
+
+class TestGetActivityHeatmap:
+    BASE = datetime(2024, 6, 3, 10, 0, 0)  # Monday 10:00
+    WINDOW_END = datetime(2024, 12, 31)
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="HEATMAP_MAP", name="Heatmap Map")
+
+    def _game(self, map_obj, time, min_elo=0, average_elo=1000):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=time,
+            min_elo=min_elo,
+            average_elo=average_elo,
+        )
+
+    def _call(self, min_elo=0, min_date=None, max_date=None):
+        return json.loads(
+            get_activity_heatmap(
+                min_elo,
+                min_date or self.BASE,
+                max_date or self.WINDOW_END,
+            )
+        )
+
+    def _cell(self, data, day, hour):
+        return next((r for r in data["results"] if r["day"] == day and r["hour"] == hour), None)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_empty_when_no_games(self):
+        data = self._call()
+        assert data["results"] == []
+
+    def test_has_last_updated(self):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_result_row_has_expected_keys(self, map_obj):
+        self._game(map_obj, self.BASE)
+        data = self._call()
+        assert set(data["results"][0].keys()) == {"day", "hour", "count"}
+
+    def test_sparse_only_non_zero_cells_returned(self, map_obj):
+        # Only one game → only one cell
+        self._game(map_obj, self.BASE)
+        data = self._call()
+        assert len(data["results"]) == 1
+
+    # ── day encoding ──────────────────────────────────────────────────────────
+
+    def test_sunday_encoded_as_0(self, map_obj):
+        sunday = datetime(2024, 6, 2, 12, 0)  # known Sunday
+        self._game(map_obj, sunday)
+        data = self._call(min_date=datetime(2024, 1, 1))
+        cell = self._cell(data, 0, 12)
+        assert cell is not None
+
+    def test_saturday_encoded_as_6(self, map_obj):
+        saturday = datetime(2024, 6, 8, 15, 0)  # known Saturday
+        self._game(map_obj, saturday)
+        data = self._call(min_date=datetime(2024, 1, 1))
+        cell = self._cell(data, 6, 15)
+        assert cell is not None
+
+    def test_monday_encoded_as_1(self, map_obj):
+        # BASE is Monday 2024-06-03; DAYOFWEEK=2 → 2-1=1
+        self._game(map_obj, self.BASE)
+        data = self._call()
+        cell = self._cell(data, 1, 10)
+        assert cell is not None
+
+    # ── hour encoding ─────────────────────────────────────────────────────────
+
+    def test_hour_matches_game_time_hour(self, map_obj):
+        t = datetime(2024, 6, 3, 17, 30)
+        self._game(map_obj, t)
+        data = self._call()
+        cell = self._cell(data, 1, 17)  # Monday = day 1
+        assert cell is not None and cell["count"] == 1
+
+    # ── aggregation ───────────────────────────────────────────────────────────
+
+    def test_multiple_games_same_cell_aggregated(self, map_obj):
+        for _ in range(4):
+            self._game(map_obj, self.BASE)
+        data = self._call()
+        assert data["results"][0]["count"] == 4
+
+    def test_games_in_different_cells_produce_separate_rows(self, map_obj):
+        self._game(map_obj, datetime(2024, 6, 3, 10, 0))  # Monday 10h
+        self._game(map_obj, datetime(2024, 6, 3, 14, 0))  # Monday 14h
+        self._game(map_obj, datetime(2024, 6, 4, 10, 0))  # Tuesday 10h
+        data = self._call()
+        assert len(data["results"]) == 3
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_game_before_min_date_excluded(self, map_obj):
+        self._game(map_obj, self.BASE - timedelta(days=1))
+        data = self._call()
+        assert data["results"] == []
+
+    def test_game_after_max_date_excluded(self, map_obj):
+        self._game(map_obj, self.WINDOW_END + timedelta(days=1))
+        data = self._call()
+        assert data["results"] == []
+
+    def test_game_on_min_date_included(self, map_obj):
+        self._game(map_obj, self.BASE)
+        data = self._call()
+        assert len(data["results"]) == 1
+
+    # ── min_elo filtering ─────────────────────────────────────────────────────
+
+    def test_game_meets_min_elo_included(self, map_obj):
+        self._game(map_obj, self.BASE, min_elo=2000)
+        data = self._call(min_elo=2000)
+        assert len(data["results"]) == 1
+
+    def test_game_below_min_elo_excluded(self, map_obj):
+        self._game(map_obj, self.BASE, min_elo=500)
+        data = self._call(min_elo=1000)
+        assert data["results"] == []
+
+    def test_min_elo_zero_includes_all(self, map_obj):
+        self._game(map_obj, self.BASE, min_elo=0)
+        self._game(map_obj, self.BASE, min_elo=5000)
+        data = self._call(min_elo=0)
+        assert data["results"][0]["count"] == 2
+
+    # ── average_elo filter ────────────────────────────────────────────────────
+
+    def test_game_with_average_elo_minus_1_excluded(self, map_obj):
+        self._game(map_obj, self.BASE, average_elo=-1)
+        data = self._call()
+        assert data["results"] == []
+
+    # ── ordering ──────────────────────────────────────────────────────────────
+
+    def test_results_ordered_by_day_then_hour(self, map_obj):
+        self._game(map_obj, datetime(2024, 6, 8, 15, 0))  # Saturday
+        self._game(map_obj, datetime(2024, 6, 3, 10, 0))  # Monday
+        self._game(map_obj, datetime(2024, 6, 3, 7, 0))  # Monday earlier
+        data = self._call(min_date=datetime(2024, 1, 1))
+        days_hours = [(r["day"], r["hour"]) for r in data["results"]]
+        assert days_hours == sorted(days_hours)
+
+
+# ── get_activity_heatmap_funcs ────────────────────────────────────────────────
+
+
+class TestGetActivityHeatmapFuncs:
+
+    def test_returns_one_func_per_rank(self):
+        assert len(get_activity_heatmap_funcs()) == len(RANKS)
+
+    def test_func_names_match_rank_min_elo(self):
+        for func, rank in zip(get_activity_heatmap_funcs(), RANKS):
+            assert func.__name__ == f"get_activity_heatmap_{rank['min_elo']}"
+
+    def test_no_late_binding_all_names_distinct(self):
+        names = [f.__name__ for f in get_activity_heatmap_funcs()]
+        assert len(names) == len(set(names))
+
+    def test_func_delegates_to_get_activity_heatmap(self, monkeypatch):
+        import src.threads.update_big_queries as ubq
+
+        calls = []
+
+        def fake_query(min_elo, min_date, max_date):
+            calls.append(min_elo)
+            return json.dumps({"last_updated": 0.0, "results": []})
+
+        monkeypatch.setattr(ubq, "get_activity_heatmap", fake_query)
+        funcs = get_activity_heatmap_funcs()
+        funcs[0](datetime.now() - timedelta(days=30), datetime.now())
+        assert calls == [RANKS[0]["min_elo"]]
+
+
+# ── get_activity_heatmap registration ────────────────────────────────────────
+
+
+class TestActivityHeatmapRegistration:
+
+    def test_all_rank_functions_registered_in_get_queries(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
+        for rank in RANKS:
+            assert f"get_activity_heatmap_{rank['min_elo']}" in names
+
+    def test_registered_count_matches_number_of_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        heatmap_names = [n for n in names if n.startswith("get_activity_heatmap_")]
+        assert len(heatmap_names) == len(RANKS)
+
+
+# ── get_country_h2h ───────────────────────────────────────────────────────────
+#
+# For each (country_a, country_b) pair found in qualifying games:
+#   wins   = distinct games where at least one country_a player won
+#   losses = games - wins
+#   games  = distinct games where both country_a and country_b had a player
+#
+# Only H2H_ELOS tiers are computed (3000, 3300, 3600, 4000).
+
+
+class TestGetCountryH2H:
+    BASE = datetime(2024, 6, 1, 12, 0)
+    WINDOW_END = datetime(2024, 12, 31)
+
+    # ── fixtures ──────────────────────────────────────────────────────────────
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="H2H_MAP", name="H2H Map")
+
+    @pytest.fixture
+    def zone_fra(self):
+        return Zone.create(uuid="zfra-h2h-001", name="France", country_alpha3="FRA", file_name="FRA")
+
+    @pytest.fixture
+    def zone_ger(self):
+        return Zone.create(uuid="zger-h2h-001", name="Germany", country_alpha3="GER", file_name="GER")
+
+    @pytest.fixture
+    def zone_esp(self):
+        return Zone.create(uuid="zesp-h2h-001", name="Spain", country_alpha3="ESP", file_name="ESP")
+
+    @pytest.fixture
+    def player_fra(self, zone_fra):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000031"), name="PlayerFRA", country=zone_fra)
+
+    @pytest.fixture
+    def player_ger(self, zone_ger):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000032"), name="PlayerGER", country=zone_ger)
+
+    @pytest.fixture
+    def player_esp(self, zone_esp):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000033"), name="PlayerESP", country=zone_esp)
+
+    def _game(self, map_obj, min_elo=3000, average_elo=3500, days_offset=1):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.BASE + timedelta(days=days_offset),
+            min_elo=min_elo,
+            average_elo=average_elo,
+        )
+
+    def _pg(self, player, game, is_win=False):
+        return PlayerGame.create(player=player, game=game, is_win=is_win)
+
+    def _call(self, tmp_path, min_elo=3000, min_date=None, max_date=None):
+        s = make_season("h2h", end_delta=timedelta(days=365))
+        func = get_country_h2h_func(str(tmp_path) + "/", s, min_elo)
+        func(min_date or self.BASE, max_date or self.WINDOW_END)
+        return str(tmp_path) + "/", s.id
+
+    def _read(self, path, season_id, country, min_elo=3000):
+        with open(f"{path}country_h2h_{min_elo}/{season_id}/{country}.txt") as f:
+            return json.loads(f.read())
+
+    def _record(self, data, opponent):
+        return next((r for r in data["results"] if r["opponent"] == opponent), None)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_no_games_writes_no_files(self, tmp_path):
+        path, sid = self._call(tmp_path)
+        assert (
+            not (tmp_path / "country_h2h_3000" / str(sid)).exists()
+            or len(list((tmp_path / "country_h2h_3000" / str(sid)).iterdir())) == 0
+        )
+
+    def test_result_row_has_expected_keys(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        data = self._read(path, sid, "FRA")
+        row = data["results"][0]
+        assert set(row.keys()) == {"opponent", "wins", "losses", "games"}
+
+    def test_has_last_updated(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        data = self._read(path, sid, "FRA")
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_separate_file_per_country(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        # Both FRA and GER should have files
+        self._read(path, sid, "FRA")
+        self._read(path, sid, "GER")
+
+    # ── wins / losses / games semantics ──────────────────────────────────────
+
+    def test_fra_wins_when_fra_player_wins(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["wins"] == 1
+        assert rec["losses"] == 0
+        assert rec["games"] == 1
+
+    def test_fra_loses_when_fra_player_does_not_win(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=False)
+        self._pg(player_ger, g, is_win=True)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["wins"] == 0
+        assert rec["losses"] == 1
+        assert rec["games"] == 1
+
+    def test_wins_and_losses_are_symmetric(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
+        ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        assert fra_rec["wins"] == ger_rec["losses"]
+        assert fra_rec["losses"] == ger_rec["wins"]
+        assert fra_rec["games"] == ger_rec["games"]
+
+    def test_multiple_games_accumulate(self, tmp_path, map_obj, player_fra, player_ger):
+        for is_win in [True, True, False]:
+            g = self._game(map_obj, days_offset=is_win + 1)
+            self._pg(player_fra, g, is_win=is_win)
+            self._pg(player_ger, g, is_win=not is_win)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["wins"] == 2
+        assert rec["losses"] == 1
+        assert rec["games"] == 3
+
+    def test_both_countries_winning_same_game_counted_as_win_for_both(self, tmp_path, map_obj, player_fra, player_ger):
+        # FRA and GER both have a winning player in the same game
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=True)
+        path, sid = self._call(tmp_path)
+        fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
+        ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        assert fra_rec["wins"] == 1
+        assert ger_rec["wins"] == 1
+        assert fra_rec["games"] == 1
+
+    # ── three-country game ────────────────────────────────────────────────────
+
+    def test_three_countries_all_pairs_recorded(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        self._pg(player_esp, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        fra_data = self._read(path, sid, "FRA")
+        opponents = {r["opponent"] for r in fra_data["results"]}
+        assert "GER" in opponents
+        assert "ESP" in opponents
+
+    # ── min_elo filtering ─────────────────────────────────────────────────────
+
+    def test_game_meets_min_elo_included(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj, min_elo=3000)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path, min_elo=3000)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec is not None
+
+    def test_game_below_min_elo_excluded(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj, min_elo=2000)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path, min_elo=3000)
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            self._read(path, sid, "FRA")
+
+    # ── average_elo filter ────────────────────────────────────────────────────
+
+    def test_game_with_average_elo_minus_1_excluded(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj, average_elo=-1)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            self._read(path, sid, "FRA")
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_game_before_min_date_excluded(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj, days_offset=-1)  # before BASE
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            self._read(path, sid, "FRA")
+
+    def test_game_after_max_date_excluded(self, tmp_path, map_obj, player_fra, player_ger):
+        g = self._game(map_obj, days_offset=400)  # after WINDOW_END
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            self._read(path, sid, "FRA")
+
+    # ── player with no country is ignored ────────────────────────────────────
+
+    def test_player_without_country_not_counted(self, tmp_path, map_obj, player_fra):
+        from uuid import UUID
+
+        no_country = Player.create(uuid=UUID("dddddddd-0000-0000-0000-000000000034"), name="NoCountry")
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(no_country, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        # FRA has no opponent with a country → no file
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            self._read(path, sid, "FRA")
+
+    # ── ordering ──────────────────────────────────────────────────────────────
+
+    def test_results_ordered_by_games_descending(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
+        # FRA vs GER: 3 games; FRA vs ESP: 1 game
+        for i in range(3):
+            g = self._game(map_obj, days_offset=i + 1)
+            self._pg(player_fra, g, is_win=True)
+            self._pg(player_ger, g, is_win=False)
+        g2 = self._game(map_obj, days_offset=10)
+        self._pg(player_fra, g2, is_win=True)
+        self._pg(player_esp, g2, is_win=False)
+        path, sid = self._call(tmp_path)
+        data = self._read(path, sid, "FRA")
+        games_list = [r["games"] for r in data["results"]]
+        assert games_list == sorted(games_list, reverse=True)
+        assert data["results"][0]["opponent"] == "GER"
+
+
+# ── get_country_h2h_funcs ─────────────────────────────────────────────────────
+
+
+class TestGetCountryH2HFuncs:
+
+    def test_returns_one_func_per_h2h_elo(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        assert len(get_country_h2h_funcs("cache/", s)) == len(H2H_ELOS)
+
+    def test_func_names_match_h2h_elos(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        for func, elo in zip(get_country_h2h_funcs("cache/", s), H2H_ELOS):
+            assert func.__name__ == f"get_country_h2h_{elo}"
+
+    def test_all_names_distinct(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [f.__name__ for f in get_country_h2h_funcs("cache/", s)]
+        assert len(names) == len(set(names))
+
+    def test_h2h_elos_constant_matches_expected_tiers(self):
+        assert H2H_ELOS == [3000, 3300, 3600, 4000]
+
+
+# ── get_country_h2h registration ──────────────────────────────────────────────
+
+
+class TestCountryH2HRegistration:
+
+    def test_all_h2h_elo_functions_registered(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
+        for elo in H2H_ELOS:
+            assert f"get_country_h2h_{elo}" in names
+
+    def test_registered_count_matches_h2h_elos(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        h2h_names = [n for n in names if n.startswith("get_country_h2h_")]
+        assert len(h2h_names) == len(H2H_ELOS)
+
+    def test_no_non_h2h_elos_registered(self):
+        """Verifies the stat is NOT computed for elos below 3000."""
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        h2h_names = [n for n in names if n.startswith("get_country_h2h_")]
+        for name in h2h_names:
+            elo = int(name.split("_")[-1])
+            assert elo in H2H_ELOS
+            assert elo >= 3000
