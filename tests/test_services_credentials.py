@@ -22,7 +22,6 @@ import src.nadeo_credentials as creds_module
 from src.nadeo_credentials import write_credentials
 from src.services import NadeoCore, NadeoLive, NadeoOauth, _decode_expire_time
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

@@ -11,7 +11,6 @@ from unittest.mock import MagicMock, patch
 
 from src.thread_health import write_health_file
 
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 

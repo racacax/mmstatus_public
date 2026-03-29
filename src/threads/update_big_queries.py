@@ -358,7 +358,7 @@ def get_activity_players_per_country(min_elo, min_rank, min_date):
         .join(Game)
         .where(
             Player.points >= min_elo,
-            *([(Player.rank <= min_rank)] if min_rank else []),
+            *([Player.rank <= min_rank] if min_rank else []),
             Game.time > min_date,
         )
         .group_by(Zone.id)

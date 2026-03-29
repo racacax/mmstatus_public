@@ -11,7 +11,6 @@ import settings
 import src.nadeo_credentials as creds_module
 from src.nadeo_credentials import read_credentials, write_credentials
 
-
 # ── Fixtures ─────────────────────────────────────────────────────────────────
 
 

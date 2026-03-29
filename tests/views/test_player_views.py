@@ -675,3 +675,371 @@ class TestGetActivityHeatmap:
         make_player_game(player, make_game(map_obj, is_finished=False, time=at(SUN, 14)))
         _, data = self._call()
         assert self._cell(data["results"], day=0, hour=14)["count"] == 2
+
+
+# ── get_performance_vs_elo ────────────────────────────────────────────────────
+
+BASE_TIME = datetime(2024, 1, 1, 12, 0, 0)
+
+
+def make_perf_game(map_obj, average_elo, is_finished=True, time=None):
+    """Finished game with an explicit average_elo."""
+    return Game.create(
+        map=map_obj,
+        is_finished=is_finished,
+        average_elo=average_elo,
+        time=time or BASE_TIME,
+    )
+
+
+def make_perf_player_game(player, game, points_after_match, is_win=False):
+    return PlayerGame.create(
+        player=player,
+        game=game,
+        points_after_match=points_after_match,
+        is_win=is_win,
+    )
+
+
+def make_sequence(player, map_obj, specs):
+    """
+    Create a time-ordered sequence of finished games for one player.
+    specs: list of (points_after_match, average_elo, is_win).
+    Each game is spaced 1 hour apart starting from BASE_TIME.
+    """
+    for i, (points, avg_elo, is_win) in enumerate(specs):
+        game = make_perf_game(map_obj, avg_elo, time=BASE_TIME + timedelta(hours=i))
+        make_perf_player_game(player, game, points, is_win=is_win)
+
+
+class TestGetPerformanceVsElo:
+    def _call(self, **kwargs):
+        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=None, threshold=200)
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_performance_vs_elo(**defaults)
+
+    def _bucket(self, results, name):
+        return next(r for r in results if r["bucket"] == name)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_200(self, player):
+        status, _ = self._call()
+        assert status == 200
+
+    def test_always_returns_all_three_buckets(self, player):
+        _, data = self._call()
+        names = {r["bucket"] for r in data["results"]}
+        assert names == {"underdog", "even", "favorite"}
+
+    def test_echoes_player_uuid(self, player):
+        _, data = self._call()
+        assert data["player"] == PLAYER_UUID
+
+    def test_echoes_threshold(self, player):
+        _, data = self._call(threshold=150)
+        assert data["threshold"] == 150
+
+    def test_all_buckets_zero_when_no_games(self, player):
+        _, data = self._call()
+        for b in data["results"]:
+            assert b["games_played"] == 0
+            assert b["wins"] == 0
+            assert b["losses"] == 0
+            assert b["win_rate"] == 0.0
+
+    # ── first game is always skipped ──────────────────────────────────────────
+
+    def test_single_game_produces_empty_buckets(self, player, map_obj):
+        """Only one game — no prior elo reference — so nothing is counted."""
+        make_sequence(player, map_obj, [(2000, 1800, True)])
+        _, data = self._call()
+        assert all(b["games_played"] == 0 for b in data["results"])
+
+    def test_two_games_only_second_counted(self, player, map_obj):
+        """First game is the anchor; only the second contributes to a bucket."""
+        make_sequence(player, map_obj, [(2000, 1800, True), (1900, 1800, True)])
+        _, data = self._call()
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1
+
+    # ── bucket assignment (threshold = 200) ───────────────────────────────────
+
+    def test_elo_diff_exactly_minus_threshold_is_underdog(self, player, map_obj):
+        # prev_points=1800, avg_elo=2000 → diff = -200 → underdog
+        make_sequence(player, map_obj, [(1800, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "underdog")["games_played"] == 1
+
+    def test_elo_diff_below_minus_threshold_is_underdog(self, player, map_obj):
+        # diff = -201
+        make_sequence(player, map_obj, [(1799, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "underdog")["games_played"] == 1
+
+    def test_elo_diff_one_above_minus_threshold_is_even(self, player, map_obj):
+        # diff = -199
+        make_sequence(player, map_obj, [(1801, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+
+    def test_elo_diff_exactly_plus_threshold_is_favorite(self, player, map_obj):
+        # diff = +200
+        make_sequence(player, map_obj, [(2200, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "favorite")["games_played"] == 1
+
+    def test_elo_diff_above_plus_threshold_is_favorite(self, player, map_obj):
+        # diff = +201
+        make_sequence(player, map_obj, [(2201, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "favorite")["games_played"] == 1
+
+    def test_elo_diff_one_below_plus_threshold_is_even(self, player, map_obj):
+        # diff = +199
+        make_sequence(player, map_obj, [(2199, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+
+    def test_elo_diff_zero_is_even(self, player, map_obj):
+        make_sequence(player, map_obj, [(2000, 1500, True), (1900, 2000, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+
+    def test_games_spread_across_all_three_buckets(self, player, map_obj):
+        # Game 1 (anchor): points=2000
+        # Game 2: avg=2200 → diff=-200 → underdog
+        # Game 3: avg=1850 → diff=prev(1900)-1850=+50 → even    (prev points from game2)
+        # Game 4: avg=1600 → diff=prev(1850)-1600=+250 → favorite (prev points from game3)
+        make_sequence(
+            player,
+            map_obj,
+            [
+                (2000, 1500, True),  # anchor
+                (1900, 2200, False),  # underdog
+                (1850, 1850, True),  # even
+                (1800, 1600, True),  # favorite
+            ],
+        )
+        _, data = self._call()
+        assert self._bucket(data["results"], "underdog")["games_played"] == 1
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+        assert self._bucket(data["results"], "favorite")["games_played"] == 1
+
+    # ── wins / losses counting ────────────────────────────────────────────────
+
+    def test_wins_counted_correctly(self, player, map_obj):
+        # 3 wins in even bucket — keep points stable so diff stays within ±200
+        # Game 1 (anchor): points=2000; games 2-4: avg=2000, diff=1950-2000=-50 → even
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1950, 2000, True), (1950, 2000, True), (1950, 2000, True)],
+        )
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["wins"] == 3
+
+    def test_losses_counted_correctly(self, player, map_obj):
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1900, 2000, False), (1800, 2000, False)],
+        )
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["losses"] == 2
+
+    def test_games_played_equals_wins_plus_losses(self, player, map_obj):
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1900, 2000, True), (1800, 2000, False)],
+        )
+        _, data = self._call()
+        for b in data["results"]:
+            assert b["games_played"] == b["wins"] + b["losses"]
+
+    # ── win_rate calculation ──────────────────────────────────────────────────
+
+    def test_win_rate_is_wins_over_games_played_times_100(self, player, map_obj):
+        # 2 wins, 1 loss in even → 66.67 — keep points stable so diff stays within ±200
+        # Game 1 (anchor): points=2000; games 2-4: avg=2000, diff=1950-2000=-50 → even
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1950, 2000, True), (1950, 2000, True), (1950, 2000, False)],
+        )
+        _, data = self._call()
+        b = self._bucket(data["results"], "even")
+        assert b["win_rate"] == round(200 / 3, 2)
+
+    def test_win_rate_zero_when_no_wins(self, player, map_obj):
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1900, 2000, False)],
+        )
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["win_rate"] == 0.0
+
+    def test_win_rate_100_when_all_wins(self, player, map_obj):
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1900, 2000, True)],
+        )
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["win_rate"] == 100.0
+
+    def test_win_rate_zero_when_no_games_in_bucket(self, player):
+        _, data = self._call()
+        assert self._bucket(data["results"], "underdog")["win_rate"] == 0.0
+
+    # ── "before elo" uses previous row's points_after_match ──────────────────
+
+    def test_elo_diff_uses_previous_points_not_previous_avg(self, player, map_obj):
+        """
+        elo_diff for game N = game[N-1].points_after_match - game[N].average_elo.
+        Game N-1's average_elo must not influence the diff.
+        """
+        # Game 1 (anchor): points=3000, avg=500  ← avg deliberately far from points
+        # Game 2: avg=2900 → diff = 3000 - 2900 = +100 → even (not favorite)
+        make_sequence(player, map_obj, [(3000, 500, True), (2900, 2900, True)])
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+        assert self._bucket(data["results"], "favorite")["games_played"] == 0
+
+    def test_elo_chain_propagates_through_sequence(self, player, map_obj):
+        """Each game's "before elo" comes from the immediately preceding game."""
+        # Game 1 (anchor): points=2000
+        # Game 2: avg=2000 → diff=0 → even;  points=1000 afterwards
+        # Game 3: avg=1100 → diff = 1000 - 1100 = -100 → even  (not using game1's 2000)
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1000, 2000, True), (900, 1100, True)],
+        )
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["games_played"] == 2
+        assert self._bucket(data["results"], "underdog")["games_played"] == 0
+
+    # ── custom threshold ──────────────────────────────────────────────────────
+
+    def test_smaller_threshold_widens_underdog_bucket(self, player, map_obj):
+        # diff = -100; threshold=200 → even, threshold=100 → underdog
+        make_sequence(player, map_obj, [(1900, 1500, True), (1800, 2000, True)])
+        _, even = self._call(threshold=200)
+        _, under = self._call(threshold=100)
+        assert self._bucket(even["results"], "even")["games_played"] == 1
+        assert self._bucket(under["results"], "underdog")["games_played"] == 1
+
+    def test_larger_threshold_narrows_underdog_bucket(self, player, map_obj):
+        # diff = -200; threshold=200 → underdog, threshold=300 → even
+        make_sequence(player, map_obj, [(1800, 1500, True), (1900, 2000, True)])
+        _, under = self._call(threshold=200)
+        _, even = self._call(threshold=300)
+        assert self._bucket(under["results"], "underdog")["games_played"] == 1
+        assert self._bucket(even["results"], "even")["games_played"] == 1
+
+    # ── games excluded from the sequence ─────────────────────────────────────
+
+    def test_unfinished_games_excluded(self, player, map_obj):
+        """is_finished=False games must not appear in the sequence at all."""
+        # Unfinished game between two finished ones; should not affect bucket counts
+        game_anchor = make_perf_game(map_obj, 1500, time=BASE_TIME)
+        make_perf_player_game(player, game_anchor, 2000, is_win=True)
+
+        game_unfinished = make_perf_game(map_obj, 1500, is_finished=False, time=BASE_TIME + timedelta(hours=1))
+        make_perf_player_game(player, game_unfinished, 500, is_win=False)
+
+        game_counted = make_perf_game(map_obj, 2000, time=BASE_TIME + timedelta(hours=2))
+        make_perf_player_game(player, game_counted, 1900, is_win=True)
+
+        _, data = self._call()
+        # anchor(points=2000) → counted(avg=2000): diff=0 → even
+        # unfinished game must not interfere
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1
+
+    def test_game_with_uncomputed_average_elo_excluded(self, player, map_obj):
+        """Games with average_elo == -1 must not appear in the sequence."""
+        game_anchor = make_perf_game(map_obj, 1500, time=BASE_TIME)
+        make_perf_player_game(player, game_anchor, 2000, is_win=True)
+
+        game_uncomputed = make_perf_game(map_obj, -1, time=BASE_TIME + timedelta(hours=1))
+        make_perf_player_game(player, game_uncomputed, 500, is_win=False)
+
+        game_counted = make_perf_game(map_obj, 2000, time=BASE_TIME + timedelta(hours=2))
+        make_perf_player_game(player, game_counted, 1900, is_win=True)
+
+        _, data = self._call()
+        # anchor(points=2000) → counted(avg=2000): diff=0 → even
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1
+
+    def test_game_with_null_points_after_match_excluded(self, player, map_obj):
+        """Games where points_after_match is NULL must not appear in the sequence."""
+        game_anchor = make_perf_game(map_obj, 1500, time=BASE_TIME)
+        make_perf_player_game(player, game_anchor, 2000, is_win=True)
+
+        game_null_pts = make_perf_game(map_obj, 1800, time=BASE_TIME + timedelta(hours=1))
+        PlayerGame.create(player=player, game=game_null_pts)  # points_after_match defaults to NULL
+
+        game_counted = make_perf_game(map_obj, 2000, time=BASE_TIME + timedelta(hours=2))
+        make_perf_player_game(player, game_counted, 1900, is_win=True)
+
+        _, data = self._call()
+        assert self._bucket(data["results"], "even")["games_played"] == 1
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_min_date_excludes_earlier_games(self, player, map_obj):
+        # All three games within a narrow window; earlier anchor excluded by min_date
+        # means the formerly-second game becomes the new anchor and is also skipped
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1900, 2000, True), (1800, 2000, True)],
+        )
+        # Set min_date to just before game 2 (hour 1)
+        min_ts = int((BASE_TIME + timedelta(minutes=30)).timestamp())
+        _, data = self._call(min_date=min_ts)
+        # Game 2 becomes the new anchor (skipped), game 3 is the only counted game
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1
+
+    def test_max_date_excludes_later_games(self, player, map_obj):
+        make_sequence(
+            player,
+            map_obj,
+            [(2000, 1500, True), (1900, 2000, True), (1800, 2000, True)],
+        )
+        # Exclude game 3 (hour 2)
+        max_ts = int((BASE_TIME + timedelta(hours=1, minutes=30)).timestamp())
+        _, data = self._call(max_date=max_ts)
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1  # only game 2 counted
+
+    def test_window_with_no_games_returns_empty_buckets(self, player, map_obj):
+        make_sequence(player, map_obj, [(2000, 1500, True), (1900, 2000, True)])
+        # Window entirely before the games
+        max_ts = int((BASE_TIME - timedelta(hours=1)).timestamp())
+        _, data = self._call(max_date=max_ts)
+        assert all(b["games_played"] == 0 for b in data["results"])
+
+    # ── player isolation ──────────────────────────────────────────────────────
+
+    def test_other_player_games_not_counted(self, player, opponent, map_obj):
+        make_sequence(player, map_obj, [(2000, 1500, True), (1900, 2000, True)])
+        make_sequence(opponent, map_obj, [(2000, 1500, True), (1900, 2000, True)])
+        _, data = self._call(player=PLAYER_UUID)
+        total = sum(b["games_played"] for b in data["results"])
+        assert total == 1  # only player's second game, not opponent's
+
+    def test_returns_empty_buckets_for_player_with_no_games(self, player, opponent, map_obj):
+        make_sequence(opponent, map_obj, [(2000, 1500, True), (1900, 2000, True)])
+        _, data = self._call(player=PLAYER_UUID)
+        assert all(b["games_played"] == 0 for b in data["results"])

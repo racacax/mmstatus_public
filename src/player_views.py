@@ -312,6 +312,94 @@ class PlayerAPIViews(RouteDescriber):
 
     @staticmethod
     @route(
+        name="performance_vs_elo",
+        summary="Performance vs relative elo",
+        description="Returns win rates split into three buckets based on the player's elo relative to the match "
+        "average at the time of each game. 'underdog': player elo was below match average by at least threshold "
+        "points. 'favorite': above by at least threshold. 'even': within threshold. "
+        "The player's elo before each match is approximated from the previous match's points_after_match. "
+        "The first game in the window is excluded (no prior elo reference). "
+        "Games with uncomputed average elo are excluded.",
+    )
+    def get_performance_vs_elo(
+        player: Option(UUID, description="Unique UUID identifying a player") = UUID(
+            "84078894-bae1-4399-b869-7b42a5240f02"
+        ),
+        min_date: Option(
+            int,
+            description="Unix timestamp representing the start date of filtered data",
+        ) = 0,
+        max_date: Option(
+            int,
+            description="Unix timestamp representing the end date of filtered data",
+            formatted_default="<current timestamp>",
+        ) = None,
+        threshold: Option(
+            int,
+            description="Elo point gap separating underdog / even / favorite buckets",
+        ) = 200,
+    ):
+        min_date = datetime.fromtimestamp(min_date)
+        max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
+
+        rows = list(
+            PlayerGame.select(
+                PlayerGame.points_after_match,
+                PlayerGame.is_win,
+                Game.average_elo,
+            )
+            .join(Game, JOIN.LEFT_OUTER)
+            .where(
+                PlayerGame.player_id == player,
+                PlayerGame.points_after_match != None,
+                Game.is_finished == True,
+                Game.average_elo > -1,
+                Game.time >= min_date,
+                Game.time <= max_date,
+            )
+            .order_by(Game.time.asc())
+            .dicts()
+        )
+
+        buckets = {
+            "underdog": {"games_played": 0, "wins": 0, "losses": 0},
+            "even": {"games_played": 0, "wins": 0, "losses": 0},
+            "favorite": {"games_played": 0, "wins": 0, "losses": 0},
+        }
+
+        for i, row in enumerate(rows):
+            if i == 0:
+                continue  # no prior match to establish a "before" elo
+            elo_diff = rows[i - 1]["points_after_match"] - row["average_elo"]
+            if elo_diff <= -threshold:
+                bucket = "underdog"
+            elif elo_diff >= threshold:
+                bucket = "favorite"
+            else:
+                bucket = "even"
+            b = buckets[bucket]
+            b["games_played"] += 1
+            if row["is_win"]:
+                b["wins"] += 1
+            else:
+                b["losses"] += 1
+
+        results = []
+        for bucket_name, b in buckets.items():
+            results.append(
+                {
+                    "bucket": bucket_name,
+                    "games_played": b["games_played"],
+                    "wins": b["wins"],
+                    "losses": b["losses"],
+                    "win_rate": round(b["wins"] * 100 / b["games_played"], 2) if b["games_played"] > 0 else 0.0,
+                }
+            )
+
+        return 200, {"results": results, "player": player, "threshold": threshold}
+
+    @staticmethod
+    @route(
         name="statistics",
         summary="General statistics",
         description="Returns basic statistics on a selected player (points, position, matches played, ...)",

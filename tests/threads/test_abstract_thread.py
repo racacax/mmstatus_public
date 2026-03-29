@@ -6,7 +6,6 @@ import pytest
 
 from src.threads.abstract_thread import AbstractThread
 
-
 # ── Concrete stubs ───────────────────────────────────────────────────────────
 
 
