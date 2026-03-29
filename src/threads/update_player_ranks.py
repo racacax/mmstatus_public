@@ -46,8 +46,19 @@ class UpdatePlayerRanksThread(AbstractThread):
                 )
 
             if pg and pg.points_after_match is None:
-                pg.points_after_match = p.points
-                pg.rank_after_match = p.rank
+                game_season = (
+                    Season.select()
+                    .where(Season.start_time <= pg.game.time, Season.end_time >= pg.game.time)
+                    .get_or_none()
+                )
+                if game_season and game_season.id != season.id:
+                    # In case of season switch.
+                    prev_ps = PlayerSeason.get_or_none(player=p, season=game_season)
+                    pg.points_after_match = prev_ps.points if prev_ps else p.points
+                    pg.rank_after_match = prev_ps.rank if prev_ps else p.rank
+                else:
+                    pg.points_after_match = p.points
+                    pg.rank_after_match = p.rank
                 pg.save()
         except Exception as e:
             self._record_error()
