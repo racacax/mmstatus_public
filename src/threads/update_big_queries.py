@@ -724,8 +724,8 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
         .join(Player, on=(Player.uuid == PlayerGame.player_id))
         .where(
             Game.average_elo > -1,
-            Game.min_elo >= min_elo,
             Game.time >= start,
+            Player.points >= min_elo,
         )
         .group_by(Player.uuid)
         .order_by(wins.desc())
@@ -769,27 +769,25 @@ def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
             SELECT
                 pg.player_id,
                 pg.points_after_match,
-                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time ASC)  AS rn_asc,
-                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time DESC) AS rn_desc,
-                COUNT(*)     OVER (PARTITION BY pg.player_id)                       AS played
+                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time ASC) AS rn_asc,
+                COUNT(*)     OVER (PARTITION BY pg.player_id)                      AS played
             FROM game g
             JOIN playergame pg ON pg.game_id = g.id
             WHERE g.average_elo > -1
-              AND g.min_elo >= %s
               AND g.time >= %s
               AND pg.points_after_match IS NOT NULL
         )
         SELECT p.name, p.uuid, p.club_tag,
-               MAX(CASE WHEN rn_desc = 1 THEN points_after_match END)
-               - MAX(CASE WHEN rn_asc  = 1 THEN points_after_match END) AS delta,
+               p.points - MAX(CASE WHEN rn_asc = 1 THEN points_after_match END) AS delta,
                MAX(played) AS played
         FROM period_games pg
         JOIN player p ON p.uuid = pg.player_id
-        GROUP BY p.uuid, p.name, p.club_tag
+        WHERE p.points >= %s
+        GROUP BY p.uuid, p.name, p.club_tag, p.points
         ORDER BY delta DESC
         LIMIT 20
         """,
-        (min_elo, start),
+        (start, min_elo),
     )
     data = []
     for row in cursor.fetchall():

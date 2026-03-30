@@ -865,7 +865,8 @@ class TestPlayerRetentionRegistration:
 # ── get_hot_this_week ─────────────────────────────────────────────────────────
 #
 # Returns top 20 players by wins in the last 7 days (relative to datetime.now()).
-# Filterable by min_elo (Game.min_elo >= min_elo).
+# Filterable by min_elo (Player.points >= min_elo — current player points, not game min_elo).
+# All games in the 7-day window count regardless of the game's own min_elo.
 # _min_date and _max_date are accepted but ignored.
 
 
@@ -880,19 +881,25 @@ class TestGetHotThisWeek:
     def player_a(self):
         from uuid import UUID
 
-        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000011"), name="PlayerA", club_tag="TAG_A")
+        return Player.create(
+            uuid=UUID("aaaaaaaa-0000-0000-0000-000000000011"), name="PlayerA", club_tag="TAG_A", points=2000
+        )
 
     @pytest.fixture
     def player_b(self):
         from uuid import UUID
 
-        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000012"), name="PlayerB", club_tag="TAG_B")
+        return Player.create(
+            uuid=UUID("bbbbbbbb-0000-0000-0000-000000000012"), name="PlayerB", club_tag="TAG_B", points=2000
+        )
 
     @pytest.fixture
     def player_c(self):
         from uuid import UUID
 
-        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000013"), name="PlayerC", club_tag="TAG_C")
+        return Player.create(
+            uuid=UUID("cccccccc-0000-0000-0000-000000000013"), name="PlayerC", club_tag="TAG_C", points=2000
+        )
 
     def _game(self, map_obj, days_ago=1, min_elo=0, average_elo=1000):
         return Game.create(
@@ -977,21 +984,36 @@ class TestGetHotThisWeek:
         data = json.loads(get_hot_this_week(0, far_past, far_past))
         assert len(data["results"]) == 1
 
-    # ── min_elo filter ────────────────────────────────────────────────────────
+    # ── min_elo filter (based on Player.points, not Game.min_elo) ────────────
 
-    def test_game_meets_min_elo_included(self, map_obj, player_a):
-        self._pg(player_a, self._game(map_obj, min_elo=1000), is_win=True)
+    def test_player_above_threshold_included(self, map_obj):
+        from uuid import UUID
+
+        p = Player.create(uuid=UUID("eeeeeeee-0000-0000-0000-000000000011"), name="HighPts", points=2000)
+        self._pg(p, self._game(map_obj), is_win=True)
         data = self._call(min_elo=1000)
         assert len(data["results"]) == 1
 
-    def test_game_below_min_elo_excluded(self, map_obj, player_a):
-        self._pg(player_a, self._game(map_obj, min_elo=500), is_win=True)
+    def test_player_below_threshold_excluded(self, map_obj):
+        from uuid import UUID
+
+        p = Player.create(uuid=UUID("eeeeeeee-0000-0000-0000-000000000012"), name="LowPts", points=500)
+        self._pg(p, self._game(map_obj), is_win=True)
         data = self._call(min_elo=1000)
         assert data["results"] == []
 
+    def test_game_with_low_min_elo_counts_if_player_qualifies(self, map_obj):
+        from uuid import UUID
+
+        # Player has high points but game was played at low min_elo — should still appear
+        p = Player.create(uuid=UUID("eeeeeeee-0000-0000-0000-000000000013"), name="HighPtsLowGame", points=2000)
+        self._pg(p, self._game(map_obj, min_elo=0), is_win=True)
+        data = self._call(min_elo=1000)
+        assert len(data["results"]) == 1
+
     def test_min_elo_zero_includes_all(self, map_obj, player_a, player_b):
-        self._pg(player_a, self._game(map_obj, min_elo=0), is_win=True)
-        self._pg(player_b, self._game(map_obj, min_elo=5000), is_win=True)
+        self._pg(player_a, self._game(map_obj), is_win=True)
+        self._pg(player_b, self._game(map_obj), is_win=True)
         data = self._call(min_elo=0)
         names = {r["name"] for r in data["results"]}
         assert "PlayerA" in names and "PlayerB" in names
@@ -1101,7 +1123,9 @@ class TestHotThisWeekRegistration:
 
 # ── get_hot_this_week_by_points_delta ─────────────────────────────────────────
 # Top 20 players by net points gained in the last 7 days.
-# delta = points_after_match of last game - points_after_match of first game.
+# delta = Player.points (current) - points_after_match of first game of the week.
+# Filter: Player.points >= min_elo (current player points, not game min_elo).
+# All games in the window count regardless of the game's own min_elo.
 # Requires points_after_match to be set; games with NULL are ignored.
 # _min_date and _max_date are accepted but ignored.
 
@@ -1117,19 +1141,25 @@ class TestGetHotThisWeekByPointsDelta:
     def player_a(self):
         from uuid import UUID
 
-        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000021"), name="PlayerA", club_tag="TAG_A")
+        return Player.create(
+            uuid=UUID("aaaaaaaa-0000-0000-0000-000000000021"), name="PlayerA", club_tag="TAG_A", points=3000
+        )
 
     @pytest.fixture
     def player_b(self):
         from uuid import UUID
 
-        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000022"), name="PlayerB", club_tag="TAG_B")
+        return Player.create(
+            uuid=UUID("bbbbbbbb-0000-0000-0000-000000000022"), name="PlayerB", club_tag="TAG_B", points=3000
+        )
 
     @pytest.fixture
     def player_c(self):
         from uuid import UUID
 
-        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000023"), name="PlayerC", club_tag="TAG_C")
+        return Player.create(
+            uuid=UUID("cccccccc-0000-0000-0000-000000000023"), name="PlayerC", club_tag="TAG_C", points=3000
+        )
 
     def _game(self, map_obj, days_ago=1, min_elo=0, average_elo=1000):
         return Game.create(
@@ -1171,26 +1201,36 @@ class TestGetHotThisWeekByPointsDelta:
         assert isinstance(data["results"][0]["uuid"], str)
 
     # ── delta computation ─────────────────────────────────────────────────────
+    # delta = Player.points (current) - points_after_match of first game this week
 
     def test_single_game_has_delta_zero(self, map_obj, player_a):
+        # player.points = 3000, first (and only) game has points_after=3000 → delta=0
+        player_a.points = 3000
+        player_a.save()
         g = self._game(map_obj)
         self._pg(player_a, g, points_after=3000)
         data = self._call()
         assert data["results"][0]["delta"] == 0
 
-    def test_two_games_delta_is_last_minus_first(self, map_obj, player_a):
+    def test_delta_is_current_points_minus_first_game(self, map_obj, player_a):
+        # First game: points_after=3000; player currently at 3200 → delta=200
+        player_a.points = 3200
+        player_a.save()
         g1 = self._game(map_obj, days_ago=3)
         g2 = self._game(map_obj, days_ago=1)
         self._pg(player_a, g1, points_after=3000)
-        self._pg(player_a, g2, points_after=3200)
+        self._pg(player_a, g2, points_after=3150)
         data = self._call()
         assert data["results"][0]["delta"] == 200
 
     def test_negative_delta_when_points_dropped(self, map_obj, player_a):
+        # First game: points_after=3200; player now at 3000 → delta=-200
+        player_a.points = 3000
+        player_a.save()
         g1 = self._game(map_obj, days_ago=3)
         g2 = self._game(map_obj, days_ago=1)
         self._pg(player_a, g1, points_after=3200)
-        self._pg(player_a, g2, points_after=3000)
+        self._pg(player_a, g2, points_after=3050)
         data = self._call()
         assert data["results"][0]["delta"] == -200
 
@@ -1204,12 +1244,14 @@ class TestGetHotThisWeekByPointsDelta:
     # ── ordering ──────────────────────────────────────────────────────────────
 
     def test_ordered_by_delta_descending(self, map_obj, player_a, player_b, player_c):
-        # player_c: +300, player_a: +200, player_b: +100
-        for player, delta in [(player_c, 300), (player_a, 200), (player_b, 100)]:
+        # player_c: current=3300 first=3000 → +300; player_a: 3200-3000=+200; player_b: 3100-3000=+100
+        for player, current in [(player_c, 3300), (player_a, 3200), (player_b, 3100)]:
+            player.points = current
+            player.save()
             g1 = self._game(map_obj, days_ago=3)
             g2 = self._game(map_obj, days_ago=1)
             self._pg(player, g1, points_after=3000)
-            self._pg(player, g2, points_after=3000 + delta)
+            self._pg(player, g2, points_after=current - 50)
         data = self._call()
         deltas = [r["delta"] for r in data["results"]]
         assert deltas == sorted(deltas, reverse=True)
@@ -1219,9 +1261,9 @@ class TestGetHotThisWeekByPointsDelta:
         from uuid import UUID
 
         for i in range(25):
-            p = Player.create(uuid=UUID(f"dddddddd-0000-0000-0000-{i:012d}"), name=f"P{i}")
+            p = Player.create(uuid=UUID(f"dddddddd-0000-0000-0000-{i:012d}"), name=f"P{i}", points=3000 + i)
             g = self._game(map_obj, days_ago=1)
-            self._pg(p, g, points_after=3000 + i)
+            self._pg(p, g, points_after=3000)
         data = self._call()
         assert len(data["results"]) <= 20
 
@@ -1261,19 +1303,33 @@ class TestGetHotThisWeekByPointsDelta:
         data = self._call()
         assert data["results"] == []
 
-    # ── min_elo filter ────────────────────────────────────────────────────────
+    # ── min_elo filter (based on Player.points, not Game.min_elo) ────────────
 
-    def test_game_meets_min_elo_included(self, map_obj, player_a):
-        g = self._game(map_obj, min_elo=1000)
+    def test_player_above_threshold_included(self, map_obj, player_a):
+        player_a.points = 3000
+        player_a.save()
+        g = self._game(map_obj)
         self._pg(player_a, g, points_after=3000)
         data = self._call(min_elo=1000)
         assert len(data["results"]) == 1
 
-    def test_game_below_min_elo_excluded(self, map_obj, player_a):
-        g = self._game(map_obj, min_elo=500)
-        self._pg(player_a, g, points_after=3000)
+    def test_player_below_threshold_excluded(self, map_obj):
+        from uuid import UUID
+
+        p = Player.create(uuid=UUID("eeeeeeee-0000-0000-0000-000000000021"), name="LowPts", points=500)
+        g = self._game(map_obj)
+        self._pg(p, g, points_after=500)
         data = self._call(min_elo=1000)
         assert data["results"] == []
+
+    def test_game_with_low_min_elo_counts_if_player_qualifies(self, map_obj, player_a):
+        # Game's min_elo is 0 but player.points=3000 >= threshold=1000 → included
+        player_a.points = 3000
+        player_a.save()
+        g = self._game(map_obj, min_elo=0)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call(min_elo=1000)
+        assert len(data["results"]) == 1
 
     # ── average_elo filter ────────────────────────────────────────────────────
 
@@ -1286,11 +1342,17 @@ class TestGetHotThisWeekByPointsDelta:
     # ── player isolation ──────────────────────────────────────────────────────
 
     def test_player_isolation(self, map_obj, player_a, player_b):
-        for i, (player, start, end) in enumerate([(player_a, 3000, 3200), (player_b, 3000, 3050)]):
+        # player_a: current=3200, first_game=3000 → delta=200
+        # player_b: current=3050, first_game=3000 → delta=50
+        player_a.points = 3200
+        player_a.save()
+        player_b.points = 3050
+        player_b.save()
+        for i, (player, first) in enumerate([(player_a, 3000), (player_b, 3000)]):
             g1 = self._game(map_obj, days_ago=3 + i)
             g2 = self._game(map_obj, days_ago=1)
-            self._pg(player, g1, points_after=start)
-            self._pg(player, g2, points_after=end)
+            self._pg(player, g1, points_after=first)
+            self._pg(player, g2, points_after=player.points - 50)
         data = self._call()
         by_name = {r["name"]: r for r in data["results"]}
         assert by_name["PlayerA"]["delta"] == 200
