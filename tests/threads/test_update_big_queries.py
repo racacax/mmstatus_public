@@ -16,6 +16,8 @@ from src.threads.update_big_queries import (
     get_country_h2h_func,
     get_country_h2h_funcs,
     get_hot_this_week,
+    get_hot_this_week_by_points_delta,
+    get_hot_this_week_by_points_delta_funcs,
     get_hot_this_week_funcs,
     get_player_retention,
     get_player_retention_funcs,
@@ -1083,8 +1085,253 @@ class TestHotThisWeekRegistration:
     def test_registered_count_matches_number_of_ranks(self):
         s = make_season("s", end_delta=timedelta(days=30))
         names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
-        hot_names = [n for n in names if n.startswith("get_hot_this_week_")]
+        hot_names = [n for n in names if n.startswith("get_hot_this_week_") and "points_delta" not in n]
         assert len(hot_names) == len(RANKS)
+
+    def test_points_delta_registered_for_all_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        delta_names = [n for n in names if n.startswith("get_hot_this_week_by_points_delta_")]
+        assert len(delta_names) == len(RANKS)
+
+
+# ── get_hot_this_week_by_points_delta ─────────────────────────────────────────
+# Top 20 players by net points gained in the last 7 days.
+# delta = points_after_match of last game - points_after_match of first game.
+# Requires points_after_match to be set; games with NULL are ignored.
+# _min_date and _max_date are accepted but ignored.
+
+
+class TestGetHotThisWeekByPointsDelta:
+    """Tests for get_hot_this_week_by_points_delta()."""
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="DELTA_MAP", name="Delta Map")
+
+    @pytest.fixture
+    def player_a(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000021"), name="PlayerA", club_tag="TAG_A")
+
+    @pytest.fixture
+    def player_b(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000022"), name="PlayerB", club_tag="TAG_B")
+
+    @pytest.fixture
+    def player_c(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000023"), name="PlayerC", club_tag="TAG_C")
+
+    def _game(self, map_obj, days_ago=1, min_elo=0, average_elo=1000):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=datetime.now() - timedelta(days=days_ago, seconds=days_ago),
+            min_elo=min_elo,
+            average_elo=average_elo,
+        )
+
+    def _pg(self, player, game, points_after=None):
+        return PlayerGame.create(player=player, game=game, points_after_match=points_after)
+
+    def _call(self, min_elo=0):
+        return json.loads(get_hot_this_week_by_points_delta(min_elo, None, None))
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_empty_when_no_games(self):
+        data = self._call()
+        assert data["results"] == []
+
+    def test_has_last_updated(self):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_result_row_has_expected_keys(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, points_after=3100)
+        data = self._call()
+        row = data["results"][0]
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "delta", "played"}
+
+    def test_uuid_is_string(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, points_after=3100)
+        data = self._call()
+        assert isinstance(data["results"][0]["uuid"], str)
+
+    # ── delta computation ─────────────────────────────────────────────────────
+
+    def test_single_game_has_delta_zero(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call()
+        assert data["results"][0]["delta"] == 0
+
+    def test_two_games_delta_is_last_minus_first(self, map_obj, player_a):
+        g1 = self._game(map_obj, days_ago=3)
+        g2 = self._game(map_obj, days_ago=1)
+        self._pg(player_a, g1, points_after=3000)
+        self._pg(player_a, g2, points_after=3200)
+        data = self._call()
+        assert data["results"][0]["delta"] == 200
+
+    def test_negative_delta_when_points_dropped(self, map_obj, player_a):
+        g1 = self._game(map_obj, days_ago=3)
+        g2 = self._game(map_obj, days_ago=1)
+        self._pg(player_a, g1, points_after=3200)
+        self._pg(player_a, g2, points_after=3000)
+        data = self._call()
+        assert data["results"][0]["delta"] == -200
+
+    def test_played_count_is_correct(self, map_obj, player_a):
+        for i in range(4):
+            g = self._game(map_obj, days_ago=i + 1)
+            self._pg(player_a, g, points_after=3000 + i * 50)
+        data = self._call()
+        assert data["results"][0]["played"] == 4
+
+    # ── ordering ──────────────────────────────────────────────────────────────
+
+    def test_ordered_by_delta_descending(self, map_obj, player_a, player_b, player_c):
+        # player_c: +300, player_a: +200, player_b: +100
+        for player, delta in [(player_c, 300), (player_a, 200), (player_b, 100)]:
+            g1 = self._game(map_obj, days_ago=3)
+            g2 = self._game(map_obj, days_ago=1)
+            self._pg(player, g1, points_after=3000)
+            self._pg(player, g2, points_after=3000 + delta)
+        data = self._call()
+        deltas = [r["delta"] for r in data["results"]]
+        assert deltas == sorted(deltas, reverse=True)
+        assert data["results"][0]["name"] == "PlayerC"
+
+    def test_max_20_results(self, map_obj):
+        from uuid import UUID
+
+        for i in range(25):
+            p = Player.create(uuid=UUID(f"dddddddd-0000-0000-0000-{i:012d}"), name=f"P{i}")
+            g = self._game(map_obj, days_ago=1)
+            self._pg(p, g, points_after=3000 + i)
+        data = self._call()
+        assert len(data["results"]) <= 20
+
+    # ── time window ───────────────────────────────────────────────────────────
+
+    def test_game_within_7_days_included(self, map_obj, player_a):
+        g = self._game(map_obj, days_ago=6)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call()
+        assert len(data["results"]) == 1
+
+    def test_game_older_than_7_days_excluded(self, map_obj, player_a):
+        g = self._game(map_obj, days_ago=8)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call()
+        assert data["results"] == []
+
+    def test_min_date_max_date_args_are_ignored(self, map_obj, player_a):
+        g = self._game(map_obj, days_ago=1)
+        self._pg(player_a, g, points_after=3000)
+        far_past = datetime(2000, 1, 1)
+        data = json.loads(get_hot_this_week_by_points_delta(0, far_past, far_past))
+        assert len(data["results"]) == 1
+
+    # ── null points_after_match excluded ──────────────────────────────────────
+
+    def test_game_with_null_points_after_excluded(self, map_obj, player_a):
+        g = self._game(map_obj, days_ago=1)
+        self._pg(player_a, g, points_after=None)
+        data = self._call()
+        assert data["results"] == []
+
+    def test_only_null_points_games_produces_empty(self, map_obj, player_a):
+        for i in range(3):
+            g = self._game(map_obj, days_ago=i + 1)
+            self._pg(player_a, g, points_after=None)
+        data = self._call()
+        assert data["results"] == []
+
+    # ── min_elo filter ────────────────────────────────────────────────────────
+
+    def test_game_meets_min_elo_included(self, map_obj, player_a):
+        g = self._game(map_obj, min_elo=1000)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call(min_elo=1000)
+        assert len(data["results"]) == 1
+
+    def test_game_below_min_elo_excluded(self, map_obj, player_a):
+        g = self._game(map_obj, min_elo=500)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call(min_elo=1000)
+        assert data["results"] == []
+
+    # ── average_elo filter ────────────────────────────────────────────────────
+
+    def test_game_with_average_elo_minus_1_excluded(self, map_obj, player_a):
+        g = self._game(map_obj, average_elo=-1)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call()
+        assert data["results"] == []
+
+    # ── player isolation ──────────────────────────────────────────────────────
+
+    def test_player_isolation(self, map_obj, player_a, player_b):
+        for i, (player, start, end) in enumerate([(player_a, 3000, 3200), (player_b, 3000, 3050)]):
+            g1 = self._game(map_obj, days_ago=3 + i)
+            g2 = self._game(map_obj, days_ago=1)
+            self._pg(player, g1, points_after=start)
+            self._pg(player, g2, points_after=end)
+        data = self._call()
+        by_name = {r["name"]: r for r in data["results"]}
+        assert by_name["PlayerA"]["delta"] == 200
+        assert by_name["PlayerB"]["delta"] == 50
+
+    # ── club_tag ──────────────────────────────────────────────────────────────
+
+    def test_club_tag_is_returned(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call()
+        assert data["results"][0]["club_tag"] == "TAG_A"
+
+
+# ── get_hot_this_week_by_points_delta_funcs ───────────────────────────────────
+
+
+class TestGetHotThisWeekByPointsDeltaFuncs:
+
+    def test_returns_one_func_per_rank(self):
+        assert len(get_hot_this_week_by_points_delta_funcs()) == len(RANKS)
+
+    def test_func_names_include_min_elo(self):
+        funcs = get_hot_this_week_by_points_delta_funcs()
+        names = [f.__name__ for f in funcs]
+        for rank in RANKS:
+            assert f"get_hot_this_week_by_points_delta_{rank['min_elo']}" in names
+
+    def test_names_are_unique(self):
+        names = [f.__name__ for f in get_hot_this_week_by_points_delta_funcs()]
+        assert len(names) == len(set(names))
+
+    def test_func_delegates_to_get_hot_this_week_by_points_delta(self, monkeypatch):
+        import src.threads.update_big_queries as ubq
+
+        calls = []
+
+        def fake_query(min_elo, min_date, max_date):
+            calls.append(min_elo)
+            return json.dumps({"last_updated": 0.0, "results": []})
+
+        monkeypatch.setattr(ubq, "get_hot_this_week_by_points_delta", fake_query)
+        funcs = get_hot_this_week_by_points_delta_funcs()
+        funcs[0](datetime.now() - timedelta(days=30), datetime.now())
+        assert calls == [RANKS[0]["min_elo"]]
 
 
 # ── get_activity_heatmap ──────────────────────────────────────────────────────

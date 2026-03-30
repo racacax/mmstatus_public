@@ -537,3 +537,76 @@ class PlayerAPIViews(RouteDescriber):
             }
         else:
             return 404, {"message": "Current player either doesn't exist or didn't play this season"}
+
+    @staticmethod
+    @route(
+        name="matches",
+        summary="Match history",
+        description="Returns the list of matches played by a selected player, sorted by most recent first.",
+    )
+    def get_matches(
+        player: Option(UUID, description="Unique UUID identifying a player") = UUID(
+            "84078894-bae1-4399-b869-7b42a5240f02"
+        ),
+        min_date: Option(
+            int,
+            description="Unix timestamp representing the start date of filtered data",
+        ) = 0,
+        max_date: Option(
+            int,
+            description="Unix timestamp representing the end date of filtered data",
+            formatted_default="<current timestamp>",
+        ) = None,
+        page: int = 1,
+    ):
+        min_date = datetime.fromtimestamp(min_date)
+        max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
+
+        rows = list(
+            PlayerGame.select(
+                Game.id.alias("game_id"),
+                Game.time,
+                Game.is_finished,
+                Game.average_elo,
+                Game.min_elo,
+                Map.uid.alias("map_uid"),
+                Map.name.alias("map_name"),
+                PlayerGame.is_win,
+                PlayerGame.is_mvp,
+                PlayerGame.position,
+                PlayerGame.points_after_match,
+                PlayerGame.rank_after_match,
+            )
+            .join(Game, JOIN.LEFT_OUTER)
+            .join(Map, JOIN.LEFT_OUTER)
+            .where(
+                PlayerGame.player_id == player,
+                Game.time >= min_date,
+                Game.time <= max_date,
+            )
+            .order_by(Game.time.desc())
+            .paginate(page, 20)
+            .dicts()
+        )
+
+        return 200, {
+            "results": [
+                {
+                    "id": r["game_id"],
+                    "time": r["time"].timestamp() if r["time"] else None,
+                    "is_finished": r["is_finished"],
+                    "average_elo": r["average_elo"],
+                    "min_elo": r["min_elo"],
+                    "map_uid": r["map_uid"],
+                    "map_name": r["map_name"],
+                    "is_win": r["is_win"],
+                    "is_mvp": r["is_mvp"],
+                    "position": r["position"],
+                    "points_after_match": r["points_after_match"],
+                    "rank_after_match": r["rank_after_match"],
+                }
+                for r in rows
+            ],
+            "player": player,
+            "page": page,
+        }

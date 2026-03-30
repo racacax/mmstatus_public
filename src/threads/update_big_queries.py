@@ -761,6 +761,66 @@ def get_hot_this_week_funcs():
     return funcs
 
 
+def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
+    start = datetime.now() - timedelta(days=7)
+    cursor = Game._meta.database.execute_sql(
+        """
+        WITH period_games AS (
+            SELECT
+                pg.player_id,
+                pg.points_after_match,
+                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time ASC)  AS rn_asc,
+                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time DESC) AS rn_desc,
+                COUNT(*)     OVER (PARTITION BY pg.player_id)                       AS played
+            FROM game g
+            JOIN playergame pg ON pg.game_id = g.id
+            WHERE g.average_elo > -1
+              AND g.min_elo >= %s
+              AND g.time >= %s
+              AND pg.points_after_match IS NOT NULL
+        )
+        SELECT p.name, p.uuid, p.club_tag,
+               MAX(CASE WHEN rn_desc = 1 THEN points_after_match END)
+               - MAX(CASE WHEN rn_asc  = 1 THEN points_after_match END) AS delta,
+               MAX(played) AS played
+        FROM period_games pg
+        JOIN player p ON p.uuid = pg.player_id
+        GROUP BY p.uuid, p.name, p.club_tag
+        ORDER BY delta DESC
+        LIMIT 20
+        """,
+        (min_elo, start),
+    )
+    data = []
+    for row in cursor.fetchall():
+        name, uuid, club_tag, delta, played = row
+        data.append(
+            {
+                "name": name,
+                "uuid": str(uuid),
+                "club_tag": club_tag,
+                "delta": int(delta or 0),
+                "played": int(played or 0),
+            }
+        )
+    return json.dumps({"last_updated": datetime.now().timestamp(), "results": data})
+
+
+def get_hot_this_week_by_points_delta_funcs():
+    funcs = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_hot_this_week_by_points_delta(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_hot_this_week_by_points_delta_" + str(min_elo)
+            return my_func
+
+        funcs.append(parent_func(rank["min_elo"]))
+    return funcs
+
+
 def get_seasons_to_update() -> list:
     """Return seasons that need a big-queries refresh.
 
@@ -794,6 +854,7 @@ class UpdateBigQueriesThread(AbstractThread):
             *get_activity_day_of_the_week_funcs(),
             *get_player_retention_funcs(),
             *get_hot_this_week_funcs(),
+            *get_hot_this_week_by_points_delta_funcs(),
             *get_players_matches_funcs(),
         ]
 

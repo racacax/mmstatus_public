@@ -1200,3 +1200,181 @@ class TestGetPerformanceVsElo:
         make_sequence(opponent, map_obj, [(2000, 1500, True), (1900, 2000, True)])
         _, data = self._call(player=PLAYER_UUID)
         assert all(b["games_played"] == 0 for b in data["results"])
+
+
+# ── get_matches ───────────────────────────────────────────────────────────────
+
+
+class TestGetMatches:
+
+    def _call(self, **kwargs):
+        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=None, page=1)
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_matches(**defaults)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_200(self, player, map_obj):
+        _, data = self._call()
+        assert _ == 200
+
+    def test_empty_when_no_games(self, player, map_obj):
+        _, data = self._call()
+        assert data["results"] == []
+
+    def test_result_row_has_expected_keys(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        make_player_game(player, g)
+        _, data = self._call()
+        assert set(data["results"][0].keys()) == {
+            "id",
+            "time",
+            "is_finished",
+            "average_elo",
+            "min_elo",
+            "map_uid",
+            "map_name",
+            "is_win",
+            "is_mvp",
+            "position",
+            "points_after_match",
+            "rank_after_match",
+        }
+
+    def test_response_includes_player_and_page(self, player, map_obj):
+        _, data = self._call()
+        assert "player" in data
+        assert "page" in data
+
+    def test_page_echoed(self, player, map_obj):
+        _, data = self._call(page=3)
+        assert data["page"] == 3
+
+    def test_time_is_float_timestamp(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        make_player_game(player, g)
+        _, data = self._call()
+        assert isinstance(data["results"][0]["time"], float)
+
+    # ── ordering ──────────────────────────────────────────────────────────────
+
+    def test_ordered_by_time_descending(self, player, map_obj):
+        now = datetime.now()
+        g1 = make_game(map_obj, is_finished=True, time=now - timedelta(days=2))
+        g2 = make_game(map_obj, is_finished=True, time=now - timedelta(days=1))
+        g3 = make_game(map_obj, is_finished=True, time=now)
+        for g in [g1, g2, g3]:
+            make_player_game(player, g)
+        _, data = self._call()
+        times = [r["time"] for r in data["results"]]
+        assert times == sorted(times, reverse=True)
+
+    def test_most_recent_game_is_first(self, player, map_obj):
+        now = datetime.now()
+        old = make_game(map_obj, is_finished=True, time=now - timedelta(days=10))
+        recent = make_game(map_obj, is_finished=True, time=now - timedelta(hours=1))
+        make_player_game(player, old)
+        make_player_game(player, recent)
+        _, data = self._call()
+        assert data["results"][0]["id"] == recent.id
+
+    # ── player isolation ──────────────────────────────────────────────────────
+
+    def test_only_returns_games_for_requested_player(self, player, opponent, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        make_player_game(player, g)
+        make_player_game(opponent, g)
+        _, data = self._call(player=OPPONENT_UUID)
+        assert len(data["results"]) == 1
+        _, data2 = self._call(player=PLAYER_UUID)
+        assert len(data2["results"]) == 1
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_game_before_min_date_excluded(self, player, map_obj):
+        now = datetime.now()
+        g = make_game(map_obj, is_finished=True, time=now - timedelta(days=10))
+        make_player_game(player, g)
+        cutoff = int((now - timedelta(days=5)).timestamp())
+        _, data = self._call(min_date=cutoff)
+        assert data["results"] == []
+
+    def test_game_after_max_date_excluded(self, player, map_obj):
+        now = datetime.now()
+        g = make_game(map_obj, is_finished=True, time=now)
+        make_player_game(player, g)
+        past = int((now - timedelta(days=1)).timestamp())
+        _, data = self._call(max_date=past)
+        assert data["results"] == []
+
+    def test_game_within_date_range_included(self, player, map_obj):
+        now = datetime.now()
+        g = make_game(map_obj, is_finished=True, time=now - timedelta(hours=1))
+        make_player_game(player, g)
+        _, data = self._call(
+            min_date=int((now - timedelta(days=1)).timestamp()),
+            max_date=int(now.timestamp()),
+        )
+        assert len(data["results"]) == 1
+
+    # ── pagination ────────────────────────────────────────────────────────────
+
+    def test_page_1_returns_first_20(self, player, map_obj):
+        now = datetime.now().replace(microsecond=0)
+        for i in range(25):
+            g = make_game(map_obj, is_finished=True, time=now - timedelta(hours=i))
+            make_player_game(player, g)
+        _, data = self._call(page=1)
+        assert len(data["results"]) == 20
+
+    def test_page_2_returns_remaining(self, player, map_obj):
+        now = datetime.now().replace(microsecond=0)
+        for i in range(25):
+            g = make_game(map_obj, is_finished=True, time=now - timedelta(hours=i))
+            make_player_game(player, g)
+        _, data = self._call(page=2)
+        assert len(data["results"]) == 5
+
+    def test_page_beyond_total_returns_empty(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        make_player_game(player, g)
+        _, data = self._call(page=99)
+        assert data["results"] == []
+
+    # ── field values ──────────────────────────────────────────────────────────
+
+    def test_is_win_and_is_mvp_returned(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        PlayerGame.create(player=player, game=g, is_win=True, is_mvp=True)
+        _, data = self._call()
+        assert data["results"][0]["is_win"] is True
+        assert data["results"][0]["is_mvp"] is True
+
+    def test_map_uid_and_name_returned(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        make_player_game(player, g)
+        _, data = self._call()
+        assert data["results"][0]["map_uid"] == MAP_UID
+        assert data["results"][0]["map_name"] == "Test Map"
+
+    def test_points_after_match_and_rank_after_match_returned(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        PlayerGame.create(player=player, game=g, points_after_match=3500, rank_after_match=42)
+        _, data = self._call()
+        assert data["results"][0]["points_after_match"] == 3500
+        assert data["results"][0]["rank_after_match"] == 42
+
+    def test_points_after_match_is_none_when_unset(self, player, map_obj):
+        g = make_game(map_obj, is_finished=True)
+        make_player_game(player, g)
+        _, data = self._call()
+        assert data["results"][0]["points_after_match"] is None
+
+    def test_finished_and_unfinished_games_both_returned(self, player, map_obj):
+        g_fin = make_game(map_obj, is_finished=True)
+        g_unfin = make_game(map_obj, is_finished=False)
+        make_player_game(player, g_fin)
+        make_player_game(player, g_unfin)
+        _, data = self._call()
+        finished_flags = {r["is_finished"] for r in data["results"]}
+        assert finished_flags == {True, False}
