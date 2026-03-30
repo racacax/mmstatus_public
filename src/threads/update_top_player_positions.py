@@ -2,7 +2,7 @@ import time
 import traceback
 from datetime import datetime
 
-from models import Player
+from models import Player, PlayerSeason, Season
 from src.log_utils import create_logger
 from src.threads.abstract_thread import AbstractThread
 
@@ -20,17 +20,27 @@ class UpdateTopPlayersPositionThread(AbstractThread):
     @staticmethod
     def run_iteration():
         logger.info("Fetching top 200 players by points")
-        players = (Player.select().order_by(Player.points.desc())).paginate(1, 200)
-        position = 1
+        players = list((Player.select().order_by(Player.points.desc())).paginate(1, 200))
         logger.info(
             "Updating positions for players",
             extra={"players": [str(p.uuid) for p in players]},
         )
         now = datetime.now()
-        for p in players:
+        for position, p in enumerate(players, start=1):
             p.rank = position
-            position += 1
             p.save()
+
+        season = Season.get_current_season()
+        if season:
+            rank_by_uuid = {str(p.uuid): p.rank for p in players}
+            player_seasons = PlayerSeason.select().where(
+                PlayerSeason.season_id == season.id,
+                PlayerSeason.player_id.in_(list(rank_by_uuid.keys())),
+            )
+            for ps in player_seasons:
+                ps.rank = rank_by_uuid[str(ps.player_id)]
+                ps.save()
+
         logger.info(f"update_top_player_positions done in {(datetime.now() - now)}")
 
     def handle(self):

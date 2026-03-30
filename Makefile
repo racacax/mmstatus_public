@@ -19,6 +19,8 @@ run_sql:
 	${PYTHON_TTY} scripts/run_sql.py ${SQL_SCRIPT}
 create_season:
 	${PYTHON_TTY} scripts/create_season.py
+recompute_season_positions:
+	${PYTHON_TTY} scripts/recompute_season_positions.py ${SEASON_ID}
 watch:
 	${DOCKER_EXE_TTY} mmstatus_web pem watch
 migrate:
