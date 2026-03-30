@@ -6,7 +6,7 @@ from uuid import UUID
 
 from peewee import Case, fn, JOIN
 
-from models import Player, PlayerGame, Game, Map, Season, Zone
+from models import Player, PlayerGame, Game, Map, Season, Zone, PlayerSeason
 from src.player_views import PlayerAPIViews
 from src.thread_health import HEALTH_FILE
 from src.utils import Option, format_type, POINTS_TYPE, route, RouteDescriber, RANKS
@@ -250,6 +250,62 @@ class APIViews(RouteDescriber):
         f.close()
 
         return 200, json.loads(content)
+
+    @staticmethod
+    @route(
+        name="global_leaderboard",
+        summary="Global leaderboard for a season",
+        description="Returns the full ranked list of players for a given season, paginated.",
+    )
+    def get_global_leaderboard(
+        season: Option(
+            int,
+            description="ID representing a season (provided by the seasons endpoint)",
+            formatted_default="<current season>",
+        ) = -1,
+        page: Option(int, description="Page number (1-based)") = 1,
+        limit: Option(int, description="Number of results per page (max 200)") = 50,
+    ):
+        if season == -1:
+            season = Season.get_current_season().id
+        limit = min(max(1, limit), 200)
+        page = max(1, page)
+
+        rows = list(
+            PlayerSeason.select(
+                PlayerSeason.rank,
+                PlayerSeason.points,
+                Player.name,
+                Player.uuid,
+                Player.club_tag,
+                Zone.country_alpha3,
+            )
+            .join(Player, on=(Player.uuid == PlayerSeason.player_id))
+            .join(Zone, JOIN.LEFT_OUTER, on=(Zone.id == Player.country_id))
+            .where(PlayerSeason.season_id == season)
+            .order_by(PlayerSeason.rank.asc())
+            .paginate(page, limit)
+            .dicts()
+        )
+
+        total = PlayerSeason.select().where(PlayerSeason.season_id == season).count()
+
+        return 200, {
+            "results": [
+                {
+                    "rank": r["rank"],
+                    "points": r["points"],
+                    "name": r["name"],
+                    "uuid": str(r["uuid"]),
+                    "club_tag": r["club_tag"],
+                    "country": r["country_alpha3"],
+                }
+                for r in rows
+            ],
+            "page": page,
+            "limit": limit,
+            "total": total,
+        }
 
     @staticmethod
     @route(
