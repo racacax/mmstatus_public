@@ -11,7 +11,7 @@ from uuid import UUID
 import pytest
 
 from models import Game, Map, Player, PlayerGame, PlayerSeason, Season
-from src.player_views import PlayerAPIViews
+from src.player_views import PlayerAPIViews, _compute_streaks
 
 PLAYER_UUID = UUID("aaaaaaaa-0000-0000-0000-000000000001")
 OPPONENT_UUID = UUID("bbbbbbbb-0000-0000-0000-000000000002")
@@ -485,6 +485,279 @@ class TestGetStatisticsMultiSeason:
         _, data = self._call((now - timedelta(days=10)).timestamp(), now.timestamp())
         assert data["stats"]["season"] == "Spring 2025"
         assert data["stats"]["total_wins"] == 1
+
+
+# ── _compute_streaks unit tests ───────────────────────────────────────────────
+
+
+class TestComputeStreaks:
+    """Pure unit tests for the _compute_streaks helper."""
+
+    def test_empty_sequence_returns_zeros(self):
+        assert _compute_streaks([]) == (0, 0, 0)
+
+    def test_single_win(self):
+        assert _compute_streaks([True]) == (1, 0, 1)
+
+    def test_single_loss(self):
+        assert _compute_streaks([False]) == (0, 1, 0)
+
+    def test_all_wins(self):
+        assert _compute_streaks([True, True, True]) == (3, 0, 3)
+
+    def test_all_losses(self):
+        assert _compute_streaks([False, False, False]) == (0, 3, 0)
+
+    def test_alternating_win_loss_ending_win(self):
+        # W L W L W — max streak 1 each, current = 1
+        assert _compute_streaks([True, False, True, False, True]) == (1, 1, 1)
+
+    def test_alternating_loss_win_ending_loss(self):
+        # L W L W L — current = 0
+        assert _compute_streaks([False, True, False, True, False]) == (1, 1, 0)
+
+    def test_win_streak_in_middle(self):
+        # L W W W L → max_wins=3, max_losses=1, current=0
+        assert _compute_streaks([False, True, True, True, False]) == (3, 1, 0)
+
+    def test_loss_streak_in_middle(self):
+        # W L L L W → max_wins=1, max_losses=3, current=1
+        assert _compute_streaks([True, False, False, False, True]) == (1, 3, 1)
+
+    def test_realistic_sequence_wins_then_losses(self):
+        # W W L L L W → max_wins=2, max_losses=3, current=1
+        assert _compute_streaks([True, True, False, False, False, True]) == (2, 3, 1)
+
+    def test_realistic_sequence_ending_losses(self):
+        # W W W L L → max_wins=3, max_losses=2, current=0
+        assert _compute_streaks([True, True, True, False, False]) == (3, 2, 0)
+
+    def test_current_is_wins_at_tail(self):
+        # L L W W W W → current=4
+        assert _compute_streaks([False, False, True, True, True, True]) == (4, 2, 4)
+
+    def test_current_zero_when_last_is_loss(self):
+        # W W W L
+        max_wins, _, cur = _compute_streaks([True, True, True, False])
+        assert cur == 0
+        assert max_wins == 3
+
+    def test_max_losses_not_confused_by_early_win_streak(self):
+        # W W W L L L L — max_losses=4, max_wins=3
+        assert _compute_streaks([True, True, True, False, False, False, False]) == (3, 4, 0)
+
+    def test_single_win_then_many_losses(self):
+        assert _compute_streaks([True, False, False, False]) == (1, 3, 0)
+
+    def test_many_wins_then_single_loss(self):
+        assert _compute_streaks([True, True, True, False]) == (3, 1, 0)
+
+    def test_two_equal_win_streaks_max_is_correct(self):
+        # W W L W W → max=2, current=2
+        assert _compute_streaks([True, True, False, True, True]) == (2, 1, 2)
+
+    def test_two_unequal_win_streaks_picks_larger(self):
+        # W W W L W → max=3, current=1
+        assert _compute_streaks([True, True, True, False, True]) == (3, 1, 1)
+
+
+# ── streak fields in get_statistics ──────────────────────────────────────────
+
+
+class TestGetStatisticsStreaks:
+    """Tests that get_statistics includes correct streak fields in both code paths."""
+
+    @pytest.fixture
+    def now(self):
+        return datetime.now().replace(microsecond=0)
+
+    @pytest.fixture
+    def season(self, now):
+        return Season.create(
+            name="Streak Season",
+            start_time=now - timedelta(days=60),
+            end_time=now + timedelta(days=60),
+        )
+
+    @pytest.fixture
+    def player(self, season):
+        p = Player.create(uuid=PLAYER_UUID, name="TestPlayer")
+        PlayerSeason.create(player=p, season=season, points=3000, rank=10)
+        return p
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="STREAK_MAP", name="Streak Map")
+
+    def _finished(self, map_obj, now, days_ago, is_win):
+        g = Game.create(map=map_obj, is_finished=True, time=now - timedelta(days=days_ago))
+        PlayerGame.create(player_id=PLAYER_UUID, game=g, is_win=is_win)
+
+    def _unfinished(self, map_obj, now, days_ago):
+        g = Game.create(map=map_obj, is_finished=False, time=now - timedelta(days=days_ago))
+        PlayerGame.create(player_id=PLAYER_UUID, game=g, is_win=True)
+
+    def _call_season(self):
+        return PlayerAPIViews.get_statistics(player=PLAYER_UUID, min_date=0, max_date=None, season=-1)
+
+    def _call_range(self, now, days_back=30):
+        min_ts = int((now - timedelta(days=days_back)).timestamp())
+        max_ts = int(now.timestamp())
+        return PlayerAPIViews.get_statistics(player=PLAYER_UUID, min_date=min_ts, max_date=max_ts, season=-1)
+
+    # ── keys present ─────────────────────────────────────────────────────────
+
+    def test_streak_keys_present_in_season_path(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert "most_wins_in_a_row" in data["stats"]
+        assert "most_losses_in_a_row" in data["stats"]
+        assert "current_win_streak" in data["stats"]
+
+    def test_streak_keys_present_in_time_range_path(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_range(now)
+        assert "most_wins_in_a_row" in data["stats"]
+        assert "most_losses_in_a_row" in data["stats"]
+        assert "current_win_streak" in data["stats"]
+
+    def test_streak_keys_are_integers(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert isinstance(data["stats"]["most_wins_in_a_row"], int)
+        assert isinstance(data["stats"]["most_losses_in_a_row"], int)
+        assert isinstance(data["stats"]["current_win_streak"], int)
+
+    # ── zero when no finished games ───────────────────────────────────────────
+
+    def test_all_zeros_when_only_unfinished_games(self, player, map_obj, season, now):
+        self._unfinished(map_obj, now, 1)
+        self._unfinished(map_obj, now, 2)
+        _, data = self._call_season()
+        assert data["stats"]["most_wins_in_a_row"] == 0
+        assert data["stats"]["most_losses_in_a_row"] == 0
+        assert data["stats"]["current_win_streak"] == 0
+
+    # ── most_wins_in_a_row ────────────────────────────────────────────────────
+
+    def test_most_wins_single_win(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert data["stats"]["most_wins_in_a_row"] == 1
+
+    def test_most_wins_three_consecutive(self, player, map_obj, season, now):
+        for d in [3, 2, 1]:
+            self._finished(map_obj, now, d, True)
+        _, data = self._call_season()
+        assert data["stats"]["most_wins_in_a_row"] == 3
+
+    def test_most_wins_streak_in_middle_of_losses(self, player, map_obj, season, now):
+        # L W W W L
+        self._finished(map_obj, now, 5, False)
+        self._finished(map_obj, now, 4, True)
+        self._finished(map_obj, now, 3, True)
+        self._finished(map_obj, now, 2, True)
+        self._finished(map_obj, now, 1, False)
+        _, data = self._call_season()
+        assert data["stats"]["most_wins_in_a_row"] == 3
+
+    def test_most_wins_picks_longest_of_two_streaks(self, player, map_obj, season, now):
+        # W W L W W W
+        self._finished(map_obj, now, 6, True)
+        self._finished(map_obj, now, 5, True)
+        self._finished(map_obj, now, 4, False)
+        self._finished(map_obj, now, 3, True)
+        self._finished(map_obj, now, 2, True)
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert data["stats"]["most_wins_in_a_row"] == 3
+
+    # ── most_losses_in_a_row ──────────────────────────────────────────────────
+
+    def test_most_losses_single_loss(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 1, False)
+        _, data = self._call_season()
+        assert data["stats"]["most_losses_in_a_row"] == 1
+
+    def test_most_losses_four_consecutive(self, player, map_obj, season, now):
+        for d in [4, 3, 2, 1]:
+            self._finished(map_obj, now, d, False)
+        _, data = self._call_season()
+        assert data["stats"]["most_losses_in_a_row"] == 4
+
+    def test_most_losses_streak_surrounded_by_wins(self, player, map_obj, season, now):
+        # W L L W
+        self._finished(map_obj, now, 4, True)
+        self._finished(map_obj, now, 3, False)
+        self._finished(map_obj, now, 2, False)
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert data["stats"]["most_losses_in_a_row"] == 2
+
+    # ── current_win_streak ────────────────────────────────────────────────────
+
+    def test_current_win_streak_zero_when_last_is_loss(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 2, True)
+        self._finished(map_obj, now, 1, False)
+        _, data = self._call_season()
+        assert data["stats"]["current_win_streak"] == 0
+
+    def test_current_win_streak_when_last_three_are_wins(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 5, False)
+        self._finished(map_obj, now, 3, True)
+        self._finished(map_obj, now, 2, True)
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert data["stats"]["current_win_streak"] == 3
+
+    def test_current_win_streak_zero_when_no_finished_games(self, player, map_obj, season, now):
+        self._unfinished(map_obj, now, 1)
+        _, data = self._call_season()
+        assert data["stats"]["current_win_streak"] == 0
+
+    def test_current_win_streak_single_win(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_season()
+        assert data["stats"]["current_win_streak"] == 1
+
+    # ── unfinished games excluded from streaks ────────────────────────────────
+
+    def test_unfinished_game_does_not_break_current_streak(self, player, map_obj, season, now):
+        # W W [unfinished] — streak should remain 2, not be broken
+        self._finished(map_obj, now, 3, True)
+        self._finished(map_obj, now, 2, True)
+        self._unfinished(map_obj, now, 1)
+        _, data = self._call_season()
+        assert data["stats"]["current_win_streak"] == 2
+
+    def test_unfinished_game_not_counted_in_most_wins(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 2, True)
+        self._unfinished(map_obj, now, 1)
+        _, data = self._call_season()
+        assert data["stats"]["most_wins_in_a_row"] == 1
+
+    # ── time-range path produces same streak values ───────────────────────────
+
+    def test_time_range_path_most_wins(self, player, map_obj, season, now):
+        for d in [3, 2, 1]:
+            self._finished(map_obj, now, d, True)
+        _, data = self._call_range(now)
+        assert data["stats"]["most_wins_in_a_row"] == 3
+
+    def test_time_range_path_current_win_streak(self, player, map_obj, season, now):
+        self._finished(map_obj, now, 3, False)
+        self._finished(map_obj, now, 2, True)
+        self._finished(map_obj, now, 1, True)
+        _, data = self._call_range(now)
+        assert data["stats"]["current_win_streak"] == 2
+
+    def test_time_range_excludes_games_outside_window(self, player, map_obj, season, now):
+        # Game 40 days ago: outside a 30-day window
+        self._finished(map_obj, now, 40, False)
+        self._finished(map_obj, now, 1, True)
+        # If the old loss were included, streak would be 0, not 1
+        _, data = self._call_range(now, days_back=30)
+        assert data["stats"]["current_win_streak"] == 1
 
 
 # ── get_opponents_statistics ──────────────────────────────────────────────────

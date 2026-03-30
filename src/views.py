@@ -198,6 +198,8 @@ class APIViews(RouteDescriber):
                 "player_retention",
                 "hot_this_week",
                 "hot_this_week_by_points_delta",
+                "new_players_per_week",
+                "cross_rank_frequency",
                 "activity_heatmap",
             ],
         ) = "activity_per_country",
@@ -230,6 +232,8 @@ class APIViews(RouteDescriber):
             "player_retention",
             "hot_this_week",
             "hot_this_week_by_points_delta",
+            "new_players_per_week",
+            "cross_rank_frequency",
             "activity_heatmap",
         ]:
             return 404, {"message": f"'{metric}' metric doesn't exist."}

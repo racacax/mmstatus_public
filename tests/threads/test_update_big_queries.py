@@ -15,10 +15,14 @@ from src.threads.update_big_queries import (
     get_activity_per_day_of_the_week,
     get_country_h2h_func,
     get_country_h2h_funcs,
+    get_cross_rank_frequency,
+    get_cross_rank_frequency_funcs,
     get_hot_this_week,
     get_hot_this_week_by_points_delta,
     get_hot_this_week_by_points_delta_funcs,
     get_hot_this_week_funcs,
+    get_new_players_per_week,
+    get_new_players_per_week_funcs,
     get_player_retention,
     get_player_retention_funcs,
     get_rank_distribution_func,
@@ -1334,6 +1338,369 @@ class TestGetHotThisWeekByPointsDeltaFuncs:
         assert calls == [RANKS[0]["min_elo"]]
 
 
+# ── get_new_players_per_week ──────────────────────────────────────────────────
+# For each week of the season, count players whose first qualifying game (at the
+# given elo tier) fell in that week. Week numbers are 0-indexed from season
+# start. A player is counted only once (the week of their first game).
+
+
+class TestGetNewPlayersPerWeek:
+
+    SEASON_START = datetime(2024, 1, 1)
+    SEASON_END = datetime(2024, 12, 31)
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="NPW_MAP", name="NPW Map")
+
+    @pytest.fixture
+    def player_a(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000031"), name="PlayerA")
+
+    @pytest.fixture
+    def player_b(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000032"), name="PlayerB")
+
+    @pytest.fixture
+    def player_c(self):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000033"), name="PlayerC")
+
+    def _game(self, map_obj, time, min_elo=0, average_elo=1000):
+        return Game.create(map=map_obj, is_finished=True, time=time, min_elo=min_elo, average_elo=average_elo)
+
+    def _pg(self, player, game):
+        return PlayerGame.create(player=player, game=game)
+
+    def _call(self, min_elo=0):
+        return json.loads(get_new_players_per_week(min_elo, self.SEASON_START, self.SEASON_END))
+
+    def _week(self, data, week_num):
+        results = {r["week"]: r for r in data["results"]}
+        return results.get(week_num)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_empty_when_no_games(self):
+        data = self._call()
+        assert data["results"] == []
+
+    def test_has_last_updated(self):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_result_row_has_expected_keys(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert set(data["results"][0].keys()) == {"week", "week_start", "new_players"}
+
+    def test_week_is_integer(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert isinstance(data["results"][0]["week"], int)
+
+    def test_new_players_is_integer(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert isinstance(data["results"][0]["new_players"], int)
+
+    def test_week_start_is_float(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert isinstance(data["results"][0]["week_start"], float)
+
+    # ── week numbering ────────────────────────────────────────────────────────
+
+    def test_game_on_day_0_is_week_0(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert data["results"][0]["week"] == 0
+
+    def test_game_on_day_6_is_week_0(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=6)))
+        data = self._call()
+        assert data["results"][0]["week"] == 0
+
+    def test_game_on_day_7_is_week_1(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=7)))
+        data = self._call()
+        assert data["results"][0]["week"] == 1
+
+    def test_game_on_day_13_is_week_1(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=13)))
+        data = self._call()
+        assert data["results"][0]["week"] == 1
+
+    def test_game_on_day_14_is_week_2(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=14)))
+        data = self._call()
+        assert data["results"][0]["week"] == 2
+
+    def test_week_start_matches_season_start_plus_offset(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=7)))
+        data = self._call()
+        week_1 = data["results"][0]
+        expected_start = self.SEASON_START.timestamp() + 7 * 86400
+        assert week_1["week_start"] == expected_start
+
+    # ── counting ──────────────────────────────────────────────────────────────
+
+    def test_single_player_one_game_counts_as_1(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert data["results"][0]["new_players"] == 1
+
+    def test_two_players_same_week_counted_together(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START + timedelta(days=3)))
+        data = self._call()
+        assert len(data["results"]) == 1
+        assert data["results"][0]["new_players"] == 2
+
+    def test_players_in_different_weeks_split_into_separate_rows(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START + timedelta(days=7)))
+        data = self._call()
+        assert len(data["results"]) == 2
+        assert self._week(data, 0)["new_players"] == 1
+        assert self._week(data, 1)["new_players"] == 1
+
+    def test_player_counted_only_in_first_week_even_with_later_games(self, map_obj, player_a):
+        # First game in week 0; second game in week 1 — should only appear in week 0
+        g1 = self._game(map_obj, self.SEASON_START)
+        g2 = self._game(map_obj, self.SEASON_START + timedelta(days=7))
+        self._pg(player_a, g1)
+        self._pg(player_a, g2)
+        data = self._call()
+        assert len(data["results"]) == 1
+        assert data["results"][0]["week"] == 0
+        assert data["results"][0]["new_players"] == 1
+
+    def test_results_ordered_by_week(self, map_obj, player_a, player_b, player_c):
+        self._pg(player_c, self._game(map_obj, self.SEASON_START + timedelta(days=14)))
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START + timedelta(days=7)))
+        data = self._call()
+        weeks = [r["week"] for r in data["results"]]
+        assert weeks == sorted(weeks)
+
+    # ── elo filter ────────────────────────────────────────────────────────────
+
+    def test_game_below_min_elo_excluded(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START, min_elo=500))
+        data = self._call(min_elo=1000)
+        assert data["results"] == []
+
+    def test_game_at_min_elo_included(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START, min_elo=1000))
+        data = self._call(min_elo=1000)
+        assert data["results"][0]["new_players"] == 1
+
+    def test_first_game_below_elo_not_counted_second_game_above_is(self, map_obj, player_a):
+        # Player's first game ever is below the elo threshold → not in week 0.
+        # Their first qualifying game is in week 1 → counted there.
+        g_low = self._game(map_obj, self.SEASON_START, min_elo=500)
+        g_high = self._game(map_obj, self.SEASON_START + timedelta(days=7), min_elo=3000)
+        self._pg(player_a, g_low)
+        self._pg(player_a, g_high)
+        data = self._call(min_elo=3000)
+        assert len(data["results"]) == 1
+        assert data["results"][0]["week"] == 1
+
+    def test_average_elo_minus_1_excluded(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START, average_elo=-1))
+        data = self._call()
+        assert data["results"] == []
+
+    # ── season boundary ───────────────────────────────────────────────────────
+
+    def test_game_before_season_start_excluded(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START - timedelta(days=1)))
+        data = self._call()
+        assert data["results"] == []
+
+    def test_game_after_season_end_excluded(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_END + timedelta(days=1)))
+        data = self._call()
+        assert data["results"] == []
+
+    def test_game_on_season_start_included(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert data["results"][0]["new_players"] == 1
+
+    def test_game_on_season_end_included(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_END))
+        data = self._call()
+        assert len(data["results"]) == 1
+        assert data["results"][0]["new_players"] == 1
+
+    # ── sparse output (only weeks with new players appear) ────────────────────
+
+    def test_empty_week_produces_no_row(self, map_obj, player_a, player_b):
+        # Players appear in week 0 and week 2 but nobody debuts in week 1
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START + timedelta(days=14)))
+        data = self._call()
+        weeks = [r["week"] for r in data["results"]]
+        assert 1 not in weeks
+        assert weeks == [0, 2]
+
+    def test_only_weeks_with_debuts_appear(self, map_obj, player_a, player_b, player_c):
+        # Week 0 and week 4 only
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START + timedelta(days=28)))
+        # player_c plays in week 0 again (already covered — no additional row)
+        self._pg(player_c, self._game(map_obj, self.SEASON_START + timedelta(days=3)))
+        data = self._call()
+        weeks = [r["week"] for r in data["results"]]
+        assert weeks == [0, 4]
+
+    # ── multiple games for same player in same week ───────────────────────────
+
+    def test_player_with_three_games_in_week_0_counts_as_1(self, map_obj, player_a):
+        for day in range(3):
+            self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=day)))
+        data = self._call()
+        assert data["results"][0]["new_players"] == 1
+
+    def test_player_with_five_games_across_two_weeks_counted_once_in_first(self, map_obj, player_a):
+        for day in range(5):
+            self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=day * 3)))
+        data = self._call()
+        total = sum(r["new_players"] for r in data["results"])
+        assert total == 1
+
+    # ── week_start values ─────────────────────────────────────────────────────
+
+    def test_week_0_start_equals_season_start_timestamp(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        data = self._call()
+        assert data["results"][0]["week_start"] == self.SEASON_START.timestamp()
+
+    def test_week_start_formula_week_3(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=21)))
+        data = self._call()
+        assert data["results"][0]["week_start"] == self.SEASON_START.timestamp() + 3 * 7 * 86400
+
+    def test_week_start_formula_large_week(self, map_obj, player_a):
+        # Day 70 → week 10
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=70)))
+        data = self._call()
+        row = data["results"][0]
+        assert row["week"] == 10
+        assert row["week_start"] == self.SEASON_START.timestamp() + 10 * 7 * 86400
+
+    # ── min_elo edge cases ────────────────────────────────────────────────────
+
+    def test_min_elo_zero_includes_all_games(self, map_obj, player_a, player_b):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START, min_elo=0))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START, min_elo=5000))
+        data = self._call(min_elo=0)
+        assert data["results"][0]["new_players"] == 2
+
+    def test_min_elo_above_all_games_returns_empty(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj, self.SEASON_START, min_elo=1000))
+        data = self._call(min_elo=9999)
+        assert data["results"] == []
+
+    def test_player_with_all_games_below_elo_never_appears(self, map_obj, player_a, player_b):
+        # player_a only has low-elo games; player_b has a qualifying game
+        for day in range(5):
+            self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=day), min_elo=500))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START, min_elo=3000))
+        data = self._call(min_elo=3000)
+        assert len(data["results"]) == 1
+        assert data["results"][0]["new_players"] == 1
+
+    # ── sum invariant ─────────────────────────────────────────────────────────
+
+    def test_sum_of_new_players_equals_distinct_qualifying_players(self, map_obj, player_a, player_b, player_c):
+        # 3 players, each debuts in a different week → total new_players across all weeks = 3
+        self._pg(player_a, self._game(map_obj, self.SEASON_START))
+        self._pg(player_b, self._game(map_obj, self.SEASON_START + timedelta(days=7)))
+        self._pg(player_c, self._game(map_obj, self.SEASON_START + timedelta(days=21)))
+        data = self._call()
+        assert sum(r["new_players"] for r in data["results"]) == 3
+
+    def test_player_with_pre_season_and_in_season_game_counted_in_correct_week(self, map_obj, player_a):
+        # Game before season → excluded; game in week 1 of season → counted there
+        self._pg(player_a, self._game(map_obj, self.SEASON_START - timedelta(days=1)))
+        self._pg(player_a, self._game(map_obj, self.SEASON_START + timedelta(days=7)))
+        data = self._call()
+        assert len(data["results"]) == 1
+        assert data["results"][0]["week"] == 1
+
+    # ── three or more players in same week ────────────────────────────────────
+
+    def test_three_players_debut_in_same_week(self, map_obj, player_a, player_b, player_c):
+        for player in [player_a, player_b, player_c]:
+            self._pg(player, self._game(map_obj, self.SEASON_START + timedelta(days=1)))
+        data = self._call()
+        assert len(data["results"]) == 1
+        assert data["results"][0]["new_players"] == 3
+
+    # ── two players on same game ──────────────────────────────────────────────
+
+    def test_two_players_in_same_game_both_counted(self, map_obj, player_a, player_b):
+        g = self._game(map_obj, self.SEASON_START)
+        self._pg(player_a, g)
+        self._pg(player_b, g)
+        data = self._call()
+        assert data["results"][0]["new_players"] == 2
+
+
+class TestGetNewPlayersPerWeekFuncs:
+
+    def test_returns_one_func_per_rank(self):
+        assert len(get_new_players_per_week_funcs()) == len(RANKS)
+
+    def test_func_names_include_min_elo(self):
+        funcs = get_new_players_per_week_funcs()
+        names = [f.__name__ for f in funcs]
+        for rank in RANKS:
+            assert f"get_new_players_per_week_{rank['min_elo']}" in names
+
+    def test_names_are_unique(self):
+        names = [f.__name__ for f in get_new_players_per_week_funcs()]
+        assert len(names) == len(set(names))
+
+    def test_func_delegates_to_get_new_players_per_week(self, monkeypatch):
+        import src.threads.update_big_queries as ubq
+
+        calls = []
+
+        def fake_query(min_elo, min_date, max_date):
+            calls.append(min_elo)
+            return json.dumps({"last_updated": 0.0, "results": []})
+
+        monkeypatch.setattr(ubq, "get_new_players_per_week", fake_query)
+        funcs = get_new_players_per_week_funcs()
+        funcs[0](datetime(2024, 1, 1), datetime(2024, 12, 31))
+        assert calls == [RANKS[0]["min_elo"]]
+
+
+class TestNewPlayersPerWeekRegistration:
+
+    def test_all_rank_functions_registered_in_get_queries(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
+        for rank in RANKS:
+            assert f"get_new_players_per_week_{rank['min_elo']}" in names
+
+    def test_registered_count_matches_number_of_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        npw_names = [n for n in names if n.startswith("get_new_players_per_week_")]
+        assert len(npw_names) == len(RANKS)
+
+
 # ── get_activity_heatmap ──────────────────────────────────────────────────────
 #
 # Returns sparse (day, hour, count) rows for games in the season window,
@@ -1858,3 +2225,332 @@ class TestCountryH2HRegistration:
             elo = int(name.split("_")[-1])
             assert elo in H2H_ELOS
             assert elo >= 3000
+
+
+# ── get_cross_rank_frequency ──────────────────────────────────────────────────
+#
+# Bins games by (effective_max_elo - min_elo) spread into 13 buckets matching
+# RANKS thresholds: [0, 300, 600, 1000, 1300, 1600, 2000, 2300, 2600, 3000, 3300, 3600, 4000].
+# For TM games (trackmaster_limit < 999999), effective max = trackmaster_limit.
+# Filters: average_elo > -1, min_elo >= min_elo, time in [min_date, max_date].
+
+
+class TestGetCrossRankFrequency:
+
+    BASE = datetime(2024, 3, 1)
+    MAX_DATE = datetime(2024, 4, 1)
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="CRF_BQ_MAP", name="CRF BQ Map")
+
+    def _game(self, map_obj, min_elo, max_elo, average_elo=2000, trackmaster_limit=999999):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.BASE + timedelta(days=5),
+            min_elo=min_elo,
+            max_elo=max_elo,
+            average_elo=average_elo,
+            trackmaster_limit=trackmaster_limit,
+        )
+
+    def _call(self, min_elo=0):
+        return json.loads(get_cross_rank_frequency(min_elo, self.BASE, self.MAX_DATE))
+
+    def _bucket(self, data, spread_min):
+        return next(r for r in data["results"] if r["spread_min"] == spread_min)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_json_with_results(self):
+        data = self._call()
+        assert "results" in data
+
+    def test_has_last_updated(self):
+        data = self._call()
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)
+
+    def test_returns_13_bins(self):
+        data = self._call()
+        assert len(data["results"]) == 13
+
+    def test_bin_keys_are_correct(self):
+        data = self._call()
+        thresholds = sorted(r["min_elo"] for r in RANKS)
+        for i, row in enumerate(data["results"]):
+            assert row["spread_min"] == thresholds[i]
+            expected_max = thresholds[i + 1] - 1 if i + 1 < len(thresholds) else None
+            assert row["spread_max"] == expected_max
+
+    def test_all_counts_zero_when_no_games(self):
+        data = self._call()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_bins_ordered_ascending(self):
+        data = self._call()
+        mins = [r["spread_min"] for r in data["results"]]
+        assert mins == sorted(mins)
+
+    def test_count_is_integer(self, map_obj):
+        self._game(map_obj, min_elo=1000, max_elo=1200)
+        data = self._call()
+        assert all(isinstance(r["count"], int) for r in data["results"])
+
+    def test_last_bin_has_none_spread_max(self):
+        data = self._call()
+        assert data["results"][-1]["spread_max"] is None
+
+    def test_first_bin_spread_min_is_zero(self):
+        data = self._call()
+        assert data["results"][0]["spread_min"] == 0
+
+    # ── spread bucketing ──────────────────────────────────────────────────────
+
+    def test_spread_0_falls_in_bucket_0(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2000)
+        data = self._call()
+        assert self._bucket(data, 0)["count"] == 1
+
+    def test_spread_299_falls_in_bucket_0(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2299)
+        data = self._call()
+        assert self._bucket(data, 0)["count"] == 1
+
+    def test_spread_300_falls_in_bucket_300(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2300)
+        data = self._call()
+        assert self._bucket(data, 300)["count"] == 1
+        assert self._bucket(data, 0)["count"] == 0
+
+    def test_spread_599_falls_in_bucket_300(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2599)
+        data = self._call()
+        assert self._bucket(data, 300)["count"] == 1
+
+    def test_spread_600_falls_in_bucket_600(self, map_obj):
+        self._game(map_obj, min_elo=1000, max_elo=1600)
+        data = self._call()
+        assert self._bucket(data, 600)["count"] == 1
+
+    def test_spread_999_falls_in_bucket_600(self, map_obj):
+        self._game(map_obj, min_elo=1000, max_elo=1999)
+        data = self._call()
+        assert self._bucket(data, 600)["count"] == 1
+
+    def test_spread_1000_falls_in_bucket_1000(self, map_obj):
+        self._game(map_obj, min_elo=1000, max_elo=2000)
+        data = self._call()
+        assert self._bucket(data, 1000)["count"] == 1
+
+    def test_spread_2299_falls_in_bucket_2000(self, map_obj):
+        self._game(map_obj, min_elo=0, max_elo=2299)
+        data = self._call()
+        assert self._bucket(data, 2000)["count"] == 1
+
+    def test_spread_2300_falls_in_bucket_2300(self, map_obj):
+        # new bin not in old 8-bin set
+        self._game(map_obj, min_elo=0, max_elo=2300)
+        data = self._call()
+        assert self._bucket(data, 2300)["count"] == 1
+        assert self._bucket(data, 2000)["count"] == 0
+
+    def test_spread_2600_falls_in_bucket_2600(self, map_obj):
+        # new bin — old system lumped 2000-2599 together
+        self._game(map_obj, min_elo=0, max_elo=2600)
+        data = self._call()
+        assert self._bucket(data, 2600)["count"] == 1
+
+    def test_spread_2999_falls_in_bucket_2600(self, map_obj):
+        self._game(map_obj, min_elo=0, max_elo=2999)
+        data = self._call()
+        assert self._bucket(data, 2600)["count"] == 1
+
+    def test_spread_3000_falls_in_bucket_3000(self, map_obj):
+        self._game(map_obj, min_elo=0, max_elo=3000)
+        data = self._call()
+        assert self._bucket(data, 3000)["count"] == 1
+
+    def test_spread_3600_falls_in_bucket_3600(self, map_obj):
+        self._game(map_obj, min_elo=0, max_elo=3600)
+        data = self._call()
+        assert self._bucket(data, 3600)["count"] == 1
+
+    def test_spread_4000_falls_in_last_bucket(self, map_obj):
+        self._game(map_obj, min_elo=0, max_elo=4000)
+        data = self._call()
+        assert self._bucket(data, 4000)["count"] == 1
+
+    def test_multiple_games_accumulate_in_same_bucket(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2100)  # spread 100 → bucket 0
+        self._game(map_obj, min_elo=2000, max_elo=2200)  # spread 200 → bucket 0
+        data = self._call()
+        assert self._bucket(data, 0)["count"] == 2
+
+    def test_games_split_across_buckets(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2100)  # spread 100 → bucket 0
+        self._game(map_obj, min_elo=2000, max_elo=2400)  # spread 400 → bucket 300
+        data = self._call()
+        assert self._bucket(data, 0)["count"] == 1
+        assert self._bucket(data, 300)["count"] == 1
+
+    # ── Trackmaster correction ────────────────────────────────────────────────
+
+    def test_tm_game_uses_trackmaster_limit_not_max_elo(self, map_obj):
+        # min_elo=3600, max_elo=5000 (raw points), trackmaster_limit=4000
+        # effective spread = 4000 - 3600 = 400 → bucket 300
+        # without correction: 5000 - 3600 = 1400 → bucket 1300
+        self._game(map_obj, min_elo=3600, max_elo=5000, trackmaster_limit=4000)
+        data = self._call()
+        assert self._bucket(data, 300)["count"] == 1
+        assert self._bucket(data, 1300)["count"] == 0
+
+    def test_non_tm_game_uses_max_elo(self, map_obj):
+        # trackmaster_limit=999999 (default) → use max_elo
+        # spread = 3900 - 3600 = 300 → bucket 300
+        self._game(map_obj, min_elo=3600, max_elo=3900, trackmaster_limit=999999)
+        data = self._call()
+        assert self._bucket(data, 300)["count"] == 1
+
+    def test_m3_player_above_4000_without_tm_not_corrected(self, map_obj):
+        # M3 player at 4100 (not TM — not top-10): trackmaster_limit=999999
+        # effective spread = 4100 - 3700 = 400 → bucket 300
+        self._game(map_obj, min_elo=3700, max_elo=4100, trackmaster_limit=999999)
+        data = self._call()
+        assert self._bucket(data, 300)["count"] == 1
+
+    def test_tm_limit_of_4000_spread_400_is_bucket_300(self, map_obj):
+        self._game(map_obj, min_elo=3600, max_elo=5000, trackmaster_limit=4000)
+        data = self._call()
+        assert self._bucket(data, 300)["count"] == 1
+
+    # ── min_elo filter ────────────────────────────────────────────────────────
+
+    def test_game_below_min_elo_excluded(self, map_obj):
+        self._game(map_obj, min_elo=500, max_elo=800)
+        data = self._call(min_elo=1000)
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_game_at_min_elo_included(self, map_obj):
+        self._game(map_obj, min_elo=1000, max_elo=1200)
+        data = self._call(min_elo=1000)
+        assert self._bucket(data, 0)["count"] == 1
+
+    def test_min_elo_zero_includes_all(self, map_obj):
+        self._game(map_obj, min_elo=0, max_elo=200)
+        data = self._call(min_elo=0)
+        assert self._bucket(data, 0)["count"] == 1
+
+    def test_min_elo_filters_mixed_games(self, map_obj):
+        self._game(map_obj, min_elo=500, max_elo=700)  # excluded
+        self._game(map_obj, min_elo=2000, max_elo=2200)  # included
+        data = self._call(min_elo=1000)
+        total = sum(r["count"] for r in data["results"])
+        assert total == 1
+
+    # ── average_elo filter ────────────────────────────────────────────────────
+
+    def test_game_with_average_elo_minus_one_excluded(self, map_obj):
+        self._game(map_obj, min_elo=2000, max_elo=2200, average_elo=-1)
+        data = self._call()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    # ── time range filter ─────────────────────────────────────────────────────
+
+    def test_game_before_min_date_excluded(self, map_obj):
+        # Create a game before BASE
+        Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.BASE - timedelta(days=1),
+            min_elo=2000,
+            max_elo=2200,
+            average_elo=2000,
+        )
+        data = self._call()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_game_after_max_date_excluded(self, map_obj):
+        Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.MAX_DATE + timedelta(days=1),
+            min_elo=2000,
+            max_elo=2200,
+            average_elo=2000,
+        )
+        data = self._call()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_game_at_boundaries_included(self, map_obj):
+        Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.BASE,
+            min_elo=2000,
+            max_elo=2100,
+            average_elo=2000,
+        )
+        Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.MAX_DATE,
+            min_elo=2000,
+            max_elo=2100,
+            average_elo=2000,
+        )
+        data = self._call()
+        assert self._bucket(data, 0)["count"] == 2
+
+
+# ── get_cross_rank_frequency_funcs ────────────────────────────────────────────
+
+
+class TestGetCrossRankFrequencyFuncs:
+
+    def test_returns_one_function_per_rank(self):
+        assert len(get_cross_rank_frequency_funcs()) == len(RANKS)
+
+    def test_each_function_has_correct_name(self):
+        for func, rank in zip(get_cross_rank_frequency_funcs(), RANKS):
+            assert func.__name__ == f"get_cross_rank_frequency_{rank['min_elo']}"
+
+    def test_function_names_are_unique(self):
+        names = [f.__name__ for f in get_cross_rank_frequency_funcs()]
+        assert len(names) == len(set(names))
+
+    def test_each_function_captures_correct_min_elo(self, monkeypatch):
+        captured = []
+
+        def fake_crf(min_elo, min_date, max_date):
+            captured.append(min_elo)
+            return json.dumps({"results": [], "last_updated": 0})
+
+        import src.threads.update_big_queries as ubq
+
+        monkeypatch.setattr(ubq, "get_cross_rank_frequency", fake_crf)
+
+        funcs = get_cross_rank_frequency_funcs()
+        for func in funcs:
+            func(datetime(2024, 1, 1), datetime(2024, 12, 31))
+
+        assert captured == [rank["min_elo"] for rank in RANKS]
+
+
+# ── get_cross_rank_frequency registration ─────────────────────────────────────
+
+
+class TestCrossRankFrequencyRegistration:
+
+    def test_all_rank_functions_registered_in_get_queries(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
+        for rank in RANKS:
+            assert f"get_cross_rank_frequency_{rank['min_elo']}" in names
+
+    def test_registered_count_matches_number_of_ranks(self):
+        s = make_season("s", end_delta=timedelta(days=30))
+        names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
+        crf_names = [n for n in names if n.startswith("get_cross_rank_frequency_")]
+        assert len(crf_names) == len(RANKS)

@@ -8,6 +8,40 @@ from src.utils import Option, route, RouteDescriber
 from src.view_utils.opponents_statistics import get_query
 
 
+def _compute_streaks(is_win_sequence):
+    """Return (most_wins_in_a_row, most_losses_in_a_row, current_win_streak)
+    from an ordered iterable of is_win booleans (finished games only, ASC)."""
+    max_wins = max_losses = cur_wins = cur_losses = 0
+    for is_win in is_win_sequence:
+        if is_win:
+            cur_wins += 1
+            cur_losses = 0
+        else:
+            cur_losses += 1
+            cur_wins = 0
+        if cur_wins > max_wins:
+            max_wins = cur_wins
+        if cur_losses > max_losses:
+            max_losses = cur_losses
+    return max_wins, max_losses, cur_wins  # cur_wins = 0 if last game was a loss
+
+
+def _get_streak_sequence(player, min_date, max_date):
+    return [
+        r["is_win"]
+        for r in PlayerGame.select(PlayerGame.is_win)
+        .join(Game, JOIN.LEFT_OUTER)
+        .where(
+            PlayerGame.player_id == player,
+            Game.is_finished == True,
+            Game.time >= min_date,
+            Game.time <= max_date,
+        )
+        .order_by(Game.time.asc())
+        .dicts()
+    ]
+
+
 class PlayerAPIViews(RouteDescriber):
     tags = ["Player"]
     prefix = "player/"
@@ -480,6 +514,7 @@ class PlayerAPIViews(RouteDescriber):
                 .dicts()
             )[0]
 
+            max_wins, max_losses, cur_win_streak = _compute_streaks(_get_streak_sequence(player, min_date, max_date))
             return 200, {
                 "uuid": str(p_obj.uuid),
                 "name": p_obj.name,
@@ -492,6 +527,9 @@ class PlayerAPIViews(RouteDescriber):
                     "total_wins": int(game_stats["total_wins"] or 0),
                     "total_losses": int(game_stats["total_losses"] or 0),
                     "total_mvp": int(game_stats["total_mvp"] or 0),
+                    "most_wins_in_a_row": max_wins,
+                    "most_losses_in_a_row": max_losses,
+                    "current_win_streak": cur_win_streak,
                 },
             }
 
@@ -521,6 +559,7 @@ class PlayerAPIViews(RouteDescriber):
         )
         if len(query) > 0:
             data = query[0]
+            max_wins, max_losses, cur_win_streak = _compute_streaks(_get_streak_sequence(player, min_date, max_date))
             return 200, {
                 "uuid": str(data["uuid"]),
                 "name": data["name"],
@@ -533,6 +572,9 @@ class PlayerAPIViews(RouteDescriber):
                     "total_wins": int(data["total_wins"]),
                     "total_losses": int(data["total_losses"]),
                     "total_mvp": int(data["total_mvp"]),
+                    "most_wins_in_a_row": max_wins,
+                    "most_losses_in_a_row": max_losses,
+                    "current_win_streak": cur_win_streak,
                 },
             }
         else:

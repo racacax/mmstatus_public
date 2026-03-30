@@ -6,7 +6,7 @@ from collections import defaultdict
 from datetime import datetime, time as time2, timedelta
 from typing import Callable
 
-from peewee import fn, Case, JOIN
+from peewee import fn, Case, JOIN, SQL
 
 from models import Player, PlayerGame, Game, Season, Zone, PlayerSeason, Map
 from src.log_utils import create_logger
@@ -832,6 +832,104 @@ def get_seasons_to_update() -> list:
     return list(Season.select().where(Season.end_time >= cutoff).order_by(Season.end_time.desc()))
 
 
+def get_new_players_per_week(min_elo, min_date, max_date):
+    """For each week of the season, count players whose first qualifying game (at
+    the given elo tier) fell within that week.  Week 0 = days 0-6 from season
+    start, week 1 = days 7-13, etc."""
+    cursor = Game._meta.database.execute_sql(
+        """
+        WITH first_game AS (
+            SELECT pg.player_id,
+                   MIN(g.time) AS first_time
+            FROM game g
+            JOIN playergame pg ON pg.game_id = g.id
+            WHERE g.average_elo > -1
+              AND g.min_elo >= %s
+              AND g.time >= %s
+              AND g.time <= %s
+            GROUP BY pg.player_id
+        )
+        SELECT FLOOR(TIMESTAMPDIFF(DAY, %s, first_time) / 7) AS week_num,
+               COUNT(*) AS new_players
+        FROM first_game
+        GROUP BY week_num
+        ORDER BY week_num
+        """,
+        (min_elo, min_date, max_date, min_date),
+    )
+    data = []
+    season_start_ts = min_date.timestamp() if hasattr(min_date, "timestamp") else min_date
+    for row in cursor.fetchall():
+        week_num, new_players = row
+        data.append(
+            {
+                "week": int(week_num),
+                "week_start": season_start_ts + int(week_num) * 7 * 86400,
+                "new_players": int(new_players),
+            }
+        )
+    return json.dumps({"last_updated": datetime.now().timestamp(), "results": data})
+
+
+def get_new_players_per_week_funcs():
+    funcs = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_new_players_per_week(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_new_players_per_week_" + str(min_elo)
+            return my_func
+
+        funcs.append(parent_func(rank["min_elo"]))
+    return funcs
+
+
+def get_cross_rank_frequency(min_elo, min_date, max_date):
+    _THRESHOLDS = sorted(r["min_elo"] for r in RANKS)
+    # [0, 300, 600, 1000, 1300, 1600, 2000, 2300, 2600, 3000, 3300, 3600, 4000]
+
+    effective_max = Case(None, [(Game.trackmaster_limit < 999999, Game.trackmaster_limit)], Game.max_elo)
+    spread = effective_max - Game.min_elo
+
+    conditions = [(spread < _THRESHOLDS[i + 1], _THRESHOLDS[i]) for i in range(len(_THRESHOLDS) - 1)]
+    bucket = Case(None, conditions, _THRESHOLDS[-1]).alias("bucket")
+
+    rows = list(
+        Game.select(bucket, fn.COUNT(Game.id).alias("count"))
+        .where(Game.average_elo > -1, Game.min_elo >= min_elo, Game.time >= min_date, Game.time <= max_date)
+        .group_by(SQL("bucket"))
+        .order_by(SQL("bucket"))
+        .dicts()
+    )
+    counts = {int(r["bucket"]): int(r["count"]) for r in rows}
+    results = [
+        {
+            "spread_min": _THRESHOLDS[i],
+            "spread_max": _THRESHOLDS[i + 1] - 1 if i + 1 < len(_THRESHOLDS) else None,
+            "count": counts.get(_THRESHOLDS[i], 0),
+        }
+        for i in range(len(_THRESHOLDS))
+    ]
+    return json.dumps({"last_updated": datetime.now().timestamp(), "results": results})
+
+
+def get_cross_rank_frequency_funcs():
+    funcs = []
+    for rank in RANKS:
+
+        def parent_func(min_elo):
+            def my_func(min_date, max_date):
+                return get_cross_rank_frequency(min_elo, min_date, max_date)
+
+            my_func.__name__ = "get_cross_rank_frequency_" + str(min_elo)
+            return my_func
+
+        funcs.append(parent_func(rank["min_elo"]))
+    return funcs
+
+
 class UpdateBigQueriesThread(AbstractThread):
     def __init__(self):
         super().__init__()
@@ -855,6 +953,8 @@ class UpdateBigQueriesThread(AbstractThread):
             *get_player_retention_funcs(),
             *get_hot_this_week_funcs(),
             *get_hot_this_week_by_points_delta_funcs(),
+            *get_new_players_per_week_funcs(),
+            *get_cross_rank_frequency_funcs(),
             *get_players_matches_funcs(),
         ]
 
