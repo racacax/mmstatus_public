@@ -712,22 +712,25 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
     wins = fn.SUM(PlayerGame.is_win)
     played = fn.COUNT(PlayerGame.id)
     query = (
-        Game.select(
+        PlayerGame.select(
             Player.name,
             Player.uuid,
             Player.club_tag,
+            Player.points.alias("current_points"),
+            Zone.country_alpha3,
             wins.alias("wins"),
             played.alias("played"),
         )
-        .join(PlayerGame)
-        .switch(Game)
-        .join(Player, on=(Player.uuid == PlayerGame.player_id))
+        .join(Player)
+        .join(Zone, JOIN.LEFT_OUTER, on=(Player.country_id == Zone.id), attr="country_zone")
+        .switch(PlayerGame)
+        .join(Game)
         .where(
             Game.average_elo > -1,
             Game.time >= start,
             Player.points >= min_elo,
         )
-        .group_by(Player.uuid)
+        .group_by(Player.uuid, Player.points, Zone.country_alpha3)
         .order_by(wins.desc())
         .paginate(1, 20)
         .dicts()
@@ -739,6 +742,8 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
                 "name": q["name"],
                 "uuid": str(q["uuid"]),
                 "club_tag": q["club_tag"],
+                "country_alpha3": q["country_alpha3"],
+                "current_points": q["current_points"],
                 "wins": int(q["wins"] or 0),
                 "played": int(q["played"] or 0),
             }
@@ -769,34 +774,45 @@ def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
             SELECT
                 pg.player_id,
                 pg.points_after_match,
-                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time ASC) AS rn_asc,
-                COUNT(*)     OVER (PARTITION BY pg.player_id)                      AS played
+                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time ASC) AS rn_asc
             FROM game g
             JOIN playergame pg ON pg.game_id = g.id
             WHERE g.average_elo > -1
               AND g.time >= %s
               AND pg.points_after_match IS NOT NULL
+        ),
+        total_played AS (
+            SELECT pg.player_id, COUNT(*) AS played
+            FROM game g
+            JOIN playergame pg ON pg.game_id = g.id
+            WHERE g.average_elo > -1 AND g.time >= %s
+            GROUP BY pg.player_id
         )
-        SELECT p.name, p.uuid, p.club_tag,
+        SELECT p.name, p.uuid, p.club_tag, p.points,
+               z.country_alpha3,
                p.points - MAX(CASE WHEN rn_asc = 1 THEN points_after_match END) AS delta,
-               MAX(played) AS played
+               tp.played
         FROM period_games pg
         JOIN player p ON p.uuid = pg.player_id
+        LEFT JOIN zone z ON z.id = p.country_id
+        JOIN total_played tp ON tp.player_id = pg.player_id
         WHERE p.points >= %s
-        GROUP BY p.uuid, p.name, p.club_tag, p.points
+        GROUP BY p.uuid, p.name, p.club_tag, p.points, z.country_alpha3, tp.played
         ORDER BY delta DESC
         LIMIT 20
         """,
-        (start, min_elo),
+        (start, start, min_elo),
     )
     data = []
     for row in cursor.fetchall():
-        name, uuid, club_tag, delta, played = row
+        name, uuid, club_tag, current_points, country_alpha3, delta, played = row
         data.append(
             {
                 "name": name,
                 "uuid": str(uuid),
                 "club_tag": club_tag,
+                "country_alpha3": country_alpha3,
+                "current_points": current_points,
                 "delta": int(delta or 0),
                 "played": int(played or 0),
             }
@@ -978,9 +994,9 @@ class UpdateBigQueriesThread(AbstractThread):
             queries = self.get_queries(season)
             for q in queries:
                 self.run_query(q, season)
-                logger.info("Waiting 20s before running new query...")
+                logger.info("Waiting 5s before running new query...")
                 time.sleep(
-                    20
+                    5
                 )  # since some of these queries are locking the whole database, we add gaps between queries to allow
                 # other normal threads to work again
 

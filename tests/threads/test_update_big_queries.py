@@ -932,13 +932,25 @@ class TestGetHotThisWeek:
         self._pg(player_a, g, is_win=True)
         data = self._call()
         row = data["results"][0]
-        assert set(row.keys()) == {"name", "uuid", "club_tag", "wins", "played"}
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "country_alpha3", "current_points", "wins", "played"}
 
     def test_uuid_is_string(self, map_obj, player_a):
         g = self._game(map_obj)
         self._pg(player_a, g, is_win=True)
         data = self._call()
         assert isinstance(data["results"][0]["uuid"], str)
+
+    def test_current_points_is_player_points(self, map_obj, player_a):
+        player_a.points = 2500
+        player_a.save()
+        self._pg(player_a, self._game(map_obj), is_win=True)
+        data = self._call()
+        assert data["results"][0]["current_points"] == 2500
+
+    def test_country_alpha3_is_none_when_no_country(self, map_obj, player_a):
+        self._pg(player_a, self._game(map_obj), is_win=True)
+        data = self._call()
+        assert data["results"][0]["country_alpha3"] is None
 
     # ── ordering ──────────────────────────────────────────────────────────────
 
@@ -1192,13 +1204,37 @@ class TestGetHotThisWeekByPointsDelta:
         self._pg(player_a, g, points_after=3100)
         data = self._call()
         row = data["results"][0]
-        assert set(row.keys()) == {"name", "uuid", "club_tag", "delta", "played"}
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "country_alpha3", "current_points", "delta", "played"}
 
     def test_uuid_is_string(self, map_obj, player_a):
         g = self._game(map_obj)
         self._pg(player_a, g, points_after=3100)
         data = self._call()
         assert isinstance(data["results"][0]["uuid"], str)
+
+    def test_current_points_is_player_points(self, map_obj, player_a):
+        player_a.points = 3200
+        player_a.save()
+        g = self._game(map_obj)
+        self._pg(player_a, g, points_after=3200)
+        data = self._call()
+        assert data["results"][0]["current_points"] == 3200
+
+    def test_country_alpha3_is_none_when_no_country(self, map_obj, player_a):
+        g = self._game(map_obj)
+        self._pg(player_a, g, points_after=3000)
+        data = self._call()
+        assert data["results"][0]["country_alpha3"] is None
+
+    def test_played_counts_all_games_including_without_points_after(self, map_obj, player_a):
+        # 2 games with points_after, 1 without — played should be 3
+        player_a.points = 3100
+        player_a.save()
+        self._pg(player_a, self._game(map_obj, days_ago=3), points_after=3000)
+        self._pg(player_a, self._game(map_obj, days_ago=2), points_after=None)
+        self._pg(player_a, self._game(map_obj, days_ago=1), points_after=3100)
+        data = self._call()
+        assert data["results"][0]["played"] == 3
 
     # ── delta computation ─────────────────────────────────────────────────────
     # delta = Player.points (current) - points_after_match of first game this week
