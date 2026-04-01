@@ -49,7 +49,7 @@ class Zone(BaseModel):
 
 class Player(BaseModel):
     uuid = peewee.UUIDField(primary_key=True)
-    name = TextField(default="")
+    name = CharField(max_length=64, default="", index=True)
     points = IntegerField(default=0, index=True)
     rank = IntegerField(default=99999, index=True)
     last_points_update = DateTimeField(default=datetime.datetime.now)
