@@ -1080,14 +1080,16 @@ class TestGetHotThisWeek:
 
 # ── get_hot_this_week_funcs ───────────────────────────────────────────────────
 
+HOT_RANKS = [r for r in RANKS if r["min_elo"] >= 2000]
+
 
 class TestGetHotThisWeekFuncs:
 
     def test_returns_one_func_per_rank(self):
-        assert len(get_hot_this_week_funcs()) == len(RANKS)
+        assert len(get_hot_this_week_funcs()) == len(HOT_RANKS)
 
     def test_func_names_match_rank_min_elo(self):
-        for func, rank in zip(get_hot_this_week_funcs(), RANKS):
+        for func, rank in zip(get_hot_this_week_funcs(), HOT_RANKS):
             assert func.__name__ == f"get_hot_this_week_{rank['min_elo']}"
 
     def test_no_late_binding_all_names_distinct(self):
@@ -1117,20 +1119,20 @@ class TestHotThisWeekRegistration:
     def test_all_rank_functions_registered_in_get_queries(self):
         s = make_season("s", end_delta=timedelta(days=30))
         names = {q.__name__ for q in UpdateBigQueriesThread().get_queries(s)}
-        for rank in RANKS:
+        for rank in HOT_RANKS:
             assert f"get_hot_this_week_{rank['min_elo']}" in names
 
     def test_registered_count_matches_number_of_ranks(self):
         s = make_season("s", end_delta=timedelta(days=30))
         names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
         hot_names = [n for n in names if n.startswith("get_hot_this_week_") and "points_delta" not in n]
-        assert len(hot_names) == len(RANKS)
+        assert len(hot_names) == len(HOT_RANKS)
 
     def test_points_delta_registered_for_all_ranks(self):
         s = make_season("s", end_delta=timedelta(days=30))
         names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
         delta_names = [n for n in names if n.startswith("get_hot_this_week_by_points_delta_")]
-        assert len(delta_names) == len(RANKS)
+        assert len(delta_names) == len(HOT_RANKS)
 
 
 # ── get_hot_this_week_by_points_delta ─────────────────────────────────────────
@@ -1409,12 +1411,12 @@ class TestGetHotThisWeekByPointsDelta:
 class TestGetHotThisWeekByPointsDeltaFuncs:
 
     def test_returns_one_func_per_rank(self):
-        assert len(get_hot_this_week_by_points_delta_funcs()) == len(RANKS)
+        assert len(get_hot_this_week_by_points_delta_funcs()) == len(HOT_RANKS)
 
     def test_func_names_include_min_elo(self):
         funcs = get_hot_this_week_by_points_delta_funcs()
         names = [f.__name__ for f in funcs]
-        for rank in RANKS:
+        for rank in HOT_RANKS:
             assert f"get_hot_this_week_by_points_delta_{rank['min_elo']}" in names
 
     def test_names_are_unique(self):

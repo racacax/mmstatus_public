@@ -754,6 +754,8 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
 def get_hot_this_week_funcs():
     funcs = []
     for rank in RANKS:
+        if rank["min_elo"] < 2000:
+            continue
 
         def parent_func(min_elo):
             def my_func(min_date, max_date):
@@ -768,61 +770,92 @@ def get_hot_this_week_funcs():
 
 def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
     start = datetime.now() - timedelta(days=7)
-    cursor = Game._meta.database.execute_sql(
-        """
-        WITH period_games AS (
-            SELECT
-                pg.player_id,
-                pg.points_after_match,
-                ROW_NUMBER() OVER (PARTITION BY pg.player_id ORDER BY g.time ASC) AS rn_asc
-            FROM game g
-            JOIN playergame pg ON pg.game_id = g.id
-            WHERE g.average_elo > -1
-              AND g.time >= %s
-              AND pg.points_after_match IS NOT NULL
-        ),
-        total_played AS (
-            SELECT pg.player_id, COUNT(*) AS played
-            FROM game g
-            JOIN playergame pg ON pg.game_id = g.id
-            WHERE g.average_elo > -1 AND g.time >= %s
-            GROUP BY pg.player_id
+
+    # Per player: game_id of their earliest game in the period that has a non-null elo
+    min_game_subq = (
+        PlayerGame.select(
+            PlayerGame.player.alias("player_id"),
+            fn.MIN(PlayerGame.game_id).alias("min_game_id"),
         )
-        SELECT p.name, p.uuid, p.club_tag, p.points,
-               z.country_alpha3,
-               p.points - MAX(CASE WHEN rn_asc = 1 THEN points_after_match END) AS delta,
-               tp.played
-        FROM period_games pg
-        JOIN player p ON p.uuid = pg.player_id
-        LEFT JOIN zone z ON z.id = p.country_id
-        JOIN total_played tp ON tp.player_id = pg.player_id
-        WHERE p.points >= %s
-        GROUP BY p.uuid, p.name, p.club_tag, p.points, z.country_alpha3, tp.played
-        ORDER BY delta DESC
-        LIMIT 20
-        """,
-        (start, start, min_elo),
+        .join(Game)
+        .where(
+            Game.average_elo > -1,
+            Game.time >= start,
+            PlayerGame.points_after_match.is_null(False),
+        )
+        .group_by(PlayerGame.player_id)
+        .alias("mg")
     )
-    data = []
-    for row in cursor.fetchall():
-        name, uuid, club_tag, current_points, country_alpha3, delta, played = row
-        data.append(
-            {
-                "name": name,
-                "uuid": str(uuid),
-                "club_tag": club_tag,
-                "country_alpha3": country_alpha3,
-                "current_points": current_points,
-                "delta": int(delta or 0),
-                "played": int(played or 0),
-            }
+
+    # Retrieve the elo from each player's first game
+    first_elo_subq = (
+        PlayerGame.select(
+            PlayerGame.player.alias("player_id"),
+            PlayerGame.points_after_match.alias("first_elo"),
         )
+        .join(
+            min_game_subq,
+            on=(
+                (PlayerGame.player_id == min_game_subq.c.player_id)
+                & (PlayerGame.game_id == min_game_subq.c.min_game_id)
+            ),
+        )
+        .alias("fe")
+    )
+
+    # Total games played per player in the period (includes games without elo)
+    total_played_subq = (
+        PlayerGame.select(
+            PlayerGame.player.alias("player_id"),
+            fn.COUNT(PlayerGame.id).alias("played"),
+        )
+        .join(Game)
+        .where(Game.average_elo > -1, Game.time >= start)
+        .group_by(PlayerGame.player_id)
+        .alias("tp")
+    )
+
+    rows = list(
+        Player.select(
+            Player.name,
+            Player.uuid,
+            Player.club_tag,
+            Player.points,
+            Zone.country_alpha3,
+            (Player.points - SQL("fe.first_elo")).alias("delta"),
+            SQL("tp.played").alias("played"),
+        )
+        .join(first_elo_subq, on=(Player.uuid == first_elo_subq.c.player_id))
+        .switch(Player)
+        .join(total_played_subq, on=(Player.uuid == total_played_subq.c.player_id))
+        .switch(Player)
+        .join(Zone, JOIN.LEFT_OUTER, on=(Zone.id == Player.country_id), attr="country_zone")
+        .where(Player.points >= min_elo)
+        .order_by(SQL("delta").desc())
+        .limit(20)
+        .dicts()
+    )
+
+    data = [
+        {
+            "name": r["name"],
+            "uuid": str(r["uuid"]),
+            "club_tag": r["club_tag"],
+            "country_alpha3": r["country_alpha3"],
+            "current_points": r["points"],
+            "delta": int(r["delta"] or 0),
+            "played": int(r["played"] or 0),
+        }
+        for r in rows
+    ]
     return json.dumps({"last_updated": datetime.now().timestamp(), "results": data})
 
 
 def get_hot_this_week_by_points_delta_funcs():
     funcs = []
     for rank in RANKS:
+        if rank["min_elo"] < 2000:
+            continue
 
         def parent_func(min_elo):
             def my_func(min_date, max_date):
