@@ -119,6 +119,103 @@ class APIViews(RouteDescriber):
 
     @staticmethod
     @route(
+        name="match",
+        summary="Match details",
+        description="Returns full details of a single match: map info, time, elo range, "
+        "and all players with their score, position, elo gained/lost, MVP status.",
+    )
+    def get_match(
+        match_id: Option(int, description="ID of the match to retrieve") = 1,
+    ):
+        try:
+            game = Game.select(Game, Map).join(Map, JOIN.LEFT_OUTER).where(Game.id == match_id).get()
+        except Game.DoesNotExist:
+            return 404, {"message": "Match not found"}
+
+        player_games = list(
+            PlayerGame.select(
+                Player.uuid.alias("player_uuid"),
+                Player.name.alias("player_name"),
+                PlayerGame.is_win,
+                PlayerGame.is_mvp,
+                PlayerGame.points.alias("score"),
+                PlayerGame.position,
+                PlayerGame.points_after_match,
+                PlayerGame.rank_after_match,
+            )
+            .join(Player, JOIN.LEFT_OUTER)
+            .where(PlayerGame.game_id == match_id)
+            .dicts()
+        )
+
+        # Single query: for each player, get their points_after_match from the game just before this one
+        player_uuids = [pg["player_uuid"] for pg in player_games]
+        prev_max_subq = (
+            PlayerGame.select(
+                PlayerGame.player_id,
+                fn.MAX(PlayerGame.game_id).alias("max_game_id"),
+            )
+            .where(
+                PlayerGame.player_id.in_(player_uuids),
+                PlayerGame.game_id < match_id,
+                PlayerGame.points_after_match.is_null(False),
+            )
+            .group_by(PlayerGame.player_id)
+            .alias("prev_max")
+        )
+        prev_elo_rows = list(
+            PlayerGame.select(
+                PlayerGame.player.alias("player_id"),
+                PlayerGame.points_after_match,
+            )
+            .join(
+                prev_max_subq,
+                on=(
+                    (PlayerGame.player_id == prev_max_subq.c.player_id)
+                    & (PlayerGame.game_id == prev_max_subq.c.max_game_id)
+                ),
+            )
+            .dicts()
+        )
+        prev_elo_map = {str(r["player_id"]): r["points_after_match"] for r in prev_elo_rows}
+
+        players = []
+        for pg in player_games:
+            elo_before = prev_elo_map.get(str(pg["player_uuid"]))
+            elo_after = pg["points_after_match"]
+            elo_gained = (elo_after - elo_before) if (elo_after is not None and elo_before is not None) else None
+            players.append(
+                {
+                    "uuid": pg["player_uuid"],
+                    "name": pg["player_name"],
+                    "position": pg["position"],
+                    "is_win": pg["is_win"],
+                    "is_mvp": pg["is_mvp"],
+                    "score": pg["score"],
+                    "elo_before": elo_before,
+                    "elo_after": elo_after,
+                    "elo_gained": elo_gained,
+                    "rank_after": pg["rank_after_match"],
+                }
+            )
+
+        players.sort(key=lambda p: (p["position"] is None, p["position"]))
+
+        return 200, {
+            "id": game.id,
+            "time": game.time.timestamp() if game.time else None,
+            "is_finished": game.is_finished,
+            "map": {"uid": game.map.uid, "name": game.map.name},
+            "min_elo": game.min_elo,
+            "max_elo": game.max_elo,
+            "average_elo": game.average_elo,
+            "trackmaster_points_limit": game.trackmaster_limit,
+            "rounds": game.rounds,
+            "players": players,
+        }
+
+    @staticmethod
+    @route(
         name="matches",
         summary="Last matches",
         description="Return a list of all the matches ordered by descending date.",
@@ -289,7 +386,7 @@ class APIViews(RouteDescriber):
             .join(Player, on=(Player.uuid == PlayerSeason.player_id))
             .join(Zone, JOIN.LEFT_OUTER, on=(Zone.id == Player.country_id))
             .where(PlayerSeason.season_id == season)
-            .order_by(PlayerSeason.rank.asc())
+            .order_by(PlayerSeason.points.desc())
             .paginate(page, limit)
             .dicts()
         )
