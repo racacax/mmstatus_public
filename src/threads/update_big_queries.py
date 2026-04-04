@@ -459,36 +459,18 @@ def get_country_h2h_func(path, season, min_elo):
         if not os.path.exists(season_path):
             os.makedirs(season_path)
 
-        pg1 = PlayerGame.alias()
-        pg2 = PlayerGame.alias()
-        p1 = Player.alias()
-        p2 = Player.alias()
-        z1 = Zone.alias()
-        z2 = Zone.alias()
-
-        wins_expr = fn.COUNT(fn.DISTINCT(Case(None, ((pg1.is_win == 1, Game.id),), None))).alias("wins")
-
-        query = (
-            Game.select(
-                z1.country_alpha3.alias("country_a"),
-                z2.country_alpha3.alias("country_b"),
-                wins_expr,
-                fn.COUNT(fn.DISTINCT(Game.id)).alias("games"),
+        rows = list(
+            PlayerGame.select(
+                PlayerGame.game,
+                Zone.country_alpha3.alias("country"),
+                Zone.name.alias("country_name"),
+                Zone.file_name,
+                PlayerGame.is_win,
             )
-            .join(pg1, on=(pg1.game_id == Game.id))
-            .join(p1, on=(p1.uuid == pg1.player_id))
-            .join(z1, on=((z1.id == p1.country_id) & (z1.country_alpha3.is_null(False))))
-            .switch(Game)
-            .join(pg2, on=((pg2.game_id == Game.id) & (pg2.player_id != pg1.player_id)))
-            .join(p2, on=(p2.uuid == pg2.player_id))
-            .join(
-                z2,
-                on=(
-                    (z2.id == p2.country_id)
-                    & (z2.country_alpha3.is_null(False))
-                    & (z2.country_alpha3 != z1.country_alpha3)
-                ),
-            )
+            .join(Player, on=(Player.uuid == PlayerGame.player))
+            .join(Zone, on=((Zone.id == Player.country) & (Zone.country_alpha3.is_null(False))))
+            .switch(PlayerGame)
+            .join(Game, on=(Game.id == PlayerGame.game))
             .where(
                 (Game.average_elo > -1)
                 & (Game.is_finished == True)
@@ -496,22 +478,43 @@ def get_country_h2h_func(path, season, min_elo):
                 & (Game.time >= min_date)
                 & (Game.time <= max_date)
             )
-            .group_by(z1.country_alpha3, z2.country_alpha3)
+            .dicts()
         )
-        rows = list(query.dicts())
 
-        by_country = defaultdict(list)
+        # Build alpha3 → country object lookup from query results (no extra query needed)
+        zone_info = {}
+        game_teams = defaultdict(lambda: {"winners": set(), "losers": set()})
         for row in rows:
-            wins = int(row["wins"] or 0)
-            games = int(row["games"] or 0)
-            by_country[row["country_a"]].append(
-                {
-                    "opponent": row["country_b"],
-                    "wins": wins,
-                    "losses": games - wins,
-                    "games": games,
-                }
-            )
+            country = row["country"]
+            zone_info[country] = {"name": row["country_name"], "file_name": row["file_name"], "alpha3": country}
+            if row["is_win"]:
+                game_teams[row["game"]]["winners"].add(country)
+            else:
+                game_teams[row["game"]]["losers"].add(country)
+
+        # Aggregate h2h per country pair
+        h2h = defaultdict(lambda: defaultdict(lambda: {"wins": 0, "draws": 0, "losses": 0, "games": 0}))
+        for teams in game_teams.values():
+            all_countries = teams["winners"] | teams["losers"]
+            for ca in all_countries:
+                ca_split = ca in teams["winners"] and ca in teams["losers"]
+                for cb in all_countries:
+                    if cb == ca:
+                        continue
+                    cb_split = cb in teams["winners"] and cb in teams["losers"]
+                    stats = h2h[ca][cb]
+                    stats["games"] += 1
+                    if ca_split or cb_split:
+                        stats["draws"] += 1
+                    elif ca in teams["winners"]:
+                        stats["wins"] += 1
+                    else:
+                        stats["losses"] += 1
+
+        by_country = {
+            ca: [{"opponent": zone_info[cb], **stats} for cb, stats in opponents.items()]
+            for ca, opponents in h2h.items()
+        }
 
         countries_written = []
         for country_a, records in by_country.items():
@@ -542,13 +545,23 @@ def get_top_100_per_country_func(path, season):
         season_path = path + f"top_100_by_country/{season.id}/"
         if not os.path.exists(season_path):
             os.makedirs(season_path)
+        RegionZone = Zone.alias()
         for country in countries:
             players = (
-                PlayerSeason.select(Player.name, Player.uuid, PlayerSeason.rank, PlayerSeason.points)
+                PlayerSeason.select(
+                    Player.name,
+                    Player.uuid,
+                    PlayerSeason.rank,
+                    PlayerSeason.points,
+                    RegionZone.name.alias("region_name"),
+                    RegionZone.file_name.alias("region_file_name"),
+                )
                 .join(Season)
                 .switch(PlayerSeason)
                 .join(Player)
                 .join(Zone, on=(Zone.id == Player.country))
+                .switch(Player)
+                .join(RegionZone, JOIN.LEFT_OUTER, on=(RegionZone.id == Player.region))
                 .where(Zone.id == country.id, Season.id == season.id)
                 .order_by(PlayerSeason.points.desc())
                 .paginate(1, 100)
@@ -560,7 +573,20 @@ def get_top_100_per_country_func(path, season):
                 f.write(
                     json.dumps(
                         {
-                            "results": [p for p in players],
+                            "results": [
+                                {
+                                    "name": p["name"],
+                                    "uuid": p["uuid"],
+                                    "rank": p["rank"],
+                                    "points": p["points"],
+                                    "region": p["region_name"]
+                                    and {
+                                        "name": p["region_name"],
+                                        "file_name": p["region_file_name"],
+                                    },
+                                }
+                                for p in players
+                            ],
                             "last_updated": datetime.now().timestamp(),
                         },
                         cls=CustomJSONEncoder,
@@ -718,6 +744,8 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
             Player.club_tag,
             Player.points.alias("current_points"),
             Zone.country_alpha3,
+            Zone.name.alias("country_name"),
+            Zone.file_name,
             wins.alias("wins"),
             played.alias("played"),
         )
@@ -730,7 +758,7 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
             Game.time >= start,
             Player.points >= min_elo,
         )
-        .group_by(Player.uuid, Player.points, Zone.country_alpha3)
+        .group_by(Player.uuid, Player.points, Zone.country_alpha3, Zone.name, Zone.file_name)
         .order_by(wins.desc())
         .paginate(1, 20)
         .dicts()
@@ -742,7 +770,12 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
                 "name": q["name"],
                 "uuid": str(q["uuid"]),
                 "club_tag": q["club_tag"],
-                "country_alpha3": q["country_alpha3"],
+                "country": q["country_alpha3"]
+                and {
+                    "name": q["country_name"],
+                    "file_name": q["file_name"],
+                    "alpha3": q["country_alpha3"],
+                },
                 "current_points": q["current_points"],
                 "wins": int(q["wins"] or 0),
                 "played": int(q["played"] or 0),
@@ -822,6 +855,8 @@ def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
             Player.club_tag,
             Player.points,
             Zone.country_alpha3,
+            Zone.name.alias("country_name"),
+            Zone.file_name,
             (Player.points - SQL("fe.first_elo")).alias("delta"),
             SQL("tp.played").alias("played"),
         )
@@ -841,7 +876,12 @@ def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
             "name": r["name"],
             "uuid": str(r["uuid"]),
             "club_tag": r["club_tag"],
-            "country_alpha3": r["country_alpha3"],
+            "country": r["country_alpha3"]
+            and {
+                "name": r["country_name"],
+                "file_name": r["file_name"],
+                "alpha3": r["country_alpha3"],
+            },
             "current_points": r["points"],
             "delta": int(r["delta"] or 0),
             "played": int(r["played"] or 0),
@@ -937,8 +977,7 @@ def get_cross_rank_frequency(min_elo, min_date, max_date):
     _THRESHOLDS = sorted(r["min_elo"] for r in RANKS)
     # [0, 300, 600, 1000, 1300, 1600, 2000, 2300, 2600, 3000, 3300, 3600, 4000]
 
-    effective_max = Case(None, [(Game.trackmaster_limit < 999999, Game.trackmaster_limit)], Game.max_elo)
-    spread = effective_max - Game.min_elo
+    spread = Game.max_elo - Game.min_elo
 
     conditions = [(spread < _THRESHOLDS[i + 1], _THRESHOLDS[i]) for i in range(len(_THRESHOLDS) - 1)]
     bucket = Case(None, conditions, _THRESHOLDS[-1]).alias("bucket")

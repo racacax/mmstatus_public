@@ -224,7 +224,7 @@ class TestGetGlobalLeaderboard:
         p = make_player("aaaaaaaa-5000-0000-0000-000000000001", "Frenchman", country=z)
         make_player_season(p, s, points=1000, rank=1)
         _, data = call(season=s.id)
-        assert data["results"][0]["country"] == "FRA"
+        assert data["results"][0]["country"] == {"name": "France", "file_name": "FRA", "alpha3": "FRA"}
 
     def test_country_is_none_when_player_has_no_country(self):
         s = make_season()

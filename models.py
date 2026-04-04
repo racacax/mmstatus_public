@@ -57,6 +57,7 @@ class Player(BaseModel):
     last_match = ForeignKeyField(Game, backref="players", null=True)
     zone = ForeignKeyField(Zone, backref="players", null=True)
     country = ForeignKeyField(Zone, backref="player_countries", null=True)
+    region = ForeignKeyField(Zone, backref="player_regions", null=True)
     club_tag = CharField(default=None, null=True, max_length=64)
 
     class Meta:

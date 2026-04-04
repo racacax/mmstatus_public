@@ -12,7 +12,7 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV TZ=Europe/Paris
 
 # System layer
-RUN apt update
+RUN apt update && apt install -y default-mysql-client
 # Javascript dependencies layer
 ENV NVM_DIR="/root/.nvm"
 ENV NODE_VERSION 22.22.2

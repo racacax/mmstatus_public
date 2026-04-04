@@ -932,7 +932,7 @@ class TestGetHotThisWeek:
         self._pg(player_a, g, is_win=True)
         data = self._call()
         row = data["results"][0]
-        assert set(row.keys()) == {"name", "uuid", "club_tag", "country_alpha3", "current_points", "wins", "played"}
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "country", "current_points", "wins", "played"}
 
     def test_uuid_is_string(self, map_obj, player_a):
         g = self._game(map_obj)
@@ -947,10 +947,10 @@ class TestGetHotThisWeek:
         data = self._call()
         assert data["results"][0]["current_points"] == 2500
 
-    def test_country_alpha3_is_none_when_no_country(self, map_obj, player_a):
+    def test_country_is_none_when_no_country(self, map_obj, player_a):
         self._pg(player_a, self._game(map_obj), is_win=True)
         data = self._call()
-        assert data["results"][0]["country_alpha3"] is None
+        assert data["results"][0]["country"] is None
 
     # ── ordering ──────────────────────────────────────────────────────────────
 
@@ -1206,7 +1206,7 @@ class TestGetHotThisWeekByPointsDelta:
         self._pg(player_a, g, points_after=3100)
         data = self._call()
         row = data["results"][0]
-        assert set(row.keys()) == {"name", "uuid", "club_tag", "country_alpha3", "current_points", "delta", "played"}
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "country", "current_points", "delta", "played"}
 
     def test_uuid_is_string(self, map_obj, player_a):
         g = self._game(map_obj)
@@ -1222,11 +1222,11 @@ class TestGetHotThisWeekByPointsDelta:
         data = self._call()
         assert data["results"][0]["current_points"] == 3200
 
-    def test_country_alpha3_is_none_when_no_country(self, map_obj, player_a):
+    def test_country_is_none_when_no_country(self, map_obj, player_a):
         g = self._game(map_obj)
         self._pg(player_a, g, points_after=3000)
         data = self._call()
-        assert data["results"][0]["country_alpha3"] is None
+        assert data["results"][0]["country"] is None
 
     def test_played_counts_all_games_including_without_points_after(self, map_obj, player_a):
         # 2 games with points_after, 1 without — played should be 3
@@ -2081,7 +2081,7 @@ class TestGetCountryH2H:
             return json.loads(f.read())
 
     def _record(self, data, opponent):
-        return next((r for r in data["results"] if r["opponent"] == opponent), None)
+        return next((r for r in data["results"] if r["opponent"]["alpha3"] == opponent), None)
 
     # ── shape / contract ──────────────────────────────────────────────────────
 
@@ -2099,7 +2099,8 @@ class TestGetCountryH2H:
         path, sid = self._call(tmp_path)
         data = self._read(path, sid, "FRA")
         row = data["results"][0]
-        assert set(row.keys()) == {"opponent", "wins", "losses", "games"}
+        assert set(row.keys()) == {"opponent", "wins", "draws", "losses", "games"}
+        assert set(row["opponent"].keys()) == {"name", "file_name", "alpha3"}
 
     def test_has_last_updated(self, tmp_path, map_obj, player_fra, player_ger):
         g = self._game(map_obj)
@@ -2184,7 +2185,7 @@ class TestGetCountryH2H:
         self._pg(player_esp, g, is_win=False)
         path, sid = self._call(tmp_path)
         fra_data = self._read(path, sid, "FRA")
-        opponents = {r["opponent"] for r in fra_data["results"]}
+        opponents = {r["opponent"]["alpha3"] for r in fra_data["results"]}
         assert "GER" in opponents
         assert "ESP" in opponents
 
@@ -2258,6 +2259,93 @@ class TestGetCountryH2H:
         with _pytest.raises(FileNotFoundError):
             self._read(path, sid, "FRA")
 
+    # ── draw detection ───────────────────────────────────────────────────────
+
+    @pytest.fixture
+    def player_fra2(self, zone_fra):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("aaaaaaaa-0000-0000-0000-000000000035"), name="PlayerFRA2", country=zone_fra)
+
+    @pytest.fixture
+    def player_ger2(self, zone_ger):
+        from uuid import UUID
+
+        return Player.create(uuid=UUID("bbbbbbbb-0000-0000-0000-000000000036"), name="PlayerGER2", country=zone_ger)
+
+    def test_fra_in_both_teams_is_draw(self, tmp_path, map_obj, player_fra, player_fra2, player_ger):
+        # FRA has one player on each team → draw
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_fra2, g, is_win=False)
+        self._pg(player_ger, g, is_win=True)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["draws"] == 1
+        assert rec["wins"] == 0
+        assert rec["losses"] == 0
+        assert rec["games"] == 1
+
+    def test_ger_in_both_teams_is_draw(self, tmp_path, map_obj, player_fra, player_ger, player_ger2):
+        # GER has one player on each team → draw for both FRA and GER
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=True)
+        self._pg(player_ger2, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
+        ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        assert fra_rec["draws"] == 1
+        assert fra_rec["wins"] == 0
+        assert ger_rec["draws"] == 1
+
+    def test_both_countries_in_both_teams_is_draw(
+        self, tmp_path, map_obj, player_fra, player_fra2, player_ger, player_ger2
+    ):
+        # Both FRA and GER span both teams
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_fra2, g, is_win=False)
+        self._pg(player_ger, g, is_win=True)
+        self._pg(player_ger2, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["draws"] == 1
+        assert rec["wins"] == 0
+        assert rec["losses"] == 0
+
+    def test_draw_is_symmetric(self, tmp_path, map_obj, player_fra, player_fra2, player_ger):
+        # If FRA is in both teams, GER should also see it as a draw
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_fra2, g, is_win=False)
+        self._pg(player_ger, g, is_win=True)
+        path, sid = self._call(tmp_path)
+        fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
+        ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        assert fra_rec["draws"] == ger_rec["draws"] == 1
+
+    def test_draw_does_not_count_as_win_or_loss(self, tmp_path, map_obj, player_fra, player_fra2, player_ger):
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_fra2, g, is_win=False)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["wins"] + rec["draws"] + rec["losses"] == rec["games"]
+        assert rec["draws"] == 1
+        assert rec["wins"] == 0
+        assert rec["losses"] == 0
+
+    def test_no_draw_when_countries_on_separate_teams(self, tmp_path, map_obj, player_fra, player_ger):
+        # Normal game: FRA wins, GER loses — no draw
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert rec["draws"] == 0
+
     # ── ordering ──────────────────────────────────────────────────────────────
 
     def test_results_ordered_by_games_descending(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
@@ -2273,7 +2361,7 @@ class TestGetCountryH2H:
         data = self._read(path, sid, "FRA")
         games_list = [r["games"] for r in data["results"]]
         assert games_list == sorted(games_list, reverse=True)
-        assert data["results"][0]["opponent"] == "GER"
+        assert data["results"][0]["opponent"]["alpha3"] == "GER"
 
 
 # ── get_country_h2h_funcs ─────────────────────────────────────────────────────
@@ -2495,33 +2583,23 @@ class TestGetCrossRankFrequency:
         assert self._bucket(data, 0)["count"] == 1
         assert self._bucket(data, 300)["count"] == 1
 
-    # ── Trackmaster correction ────────────────────────────────────────────────
-
-    def test_tm_game_uses_trackmaster_limit_not_max_elo(self, map_obj):
-        # min_elo=3600, max_elo=5000 (raw points), trackmaster_limit=4000
-        # effective spread = 4000 - 3600 = 400 → bucket 300
-        # without correction: 5000 - 3600 = 1400 → bucket 1300
+    def test_tm_game_spread_uses_max_elo_not_trackmaster_limit(self, map_obj):
+        # min_elo=3600, max_elo=5000, trackmaster_limit=4000
+        # spread = max_elo - min_elo = 5000 - 3600 = 1400 → bucket 1300
         self._game(map_obj, min_elo=3600, max_elo=5000, trackmaster_limit=4000)
         data = self._call()
-        assert self._bucket(data, 300)["count"] == 1
-        assert self._bucket(data, 1300)["count"] == 0
+        assert self._bucket(data, 1300)["count"] == 1
+        assert self._bucket(data, 300)["count"] == 0
 
-    def test_non_tm_game_uses_max_elo(self, map_obj):
-        # trackmaster_limit=999999 (default) → use max_elo
+    def test_spread_uses_max_elo(self, map_obj):
         # spread = 3900 - 3600 = 300 → bucket 300
         self._game(map_obj, min_elo=3600, max_elo=3900, trackmaster_limit=999999)
         data = self._call()
         assert self._bucket(data, 300)["count"] == 1
 
-    def test_m3_player_above_4000_without_tm_not_corrected(self, map_obj):
-        # M3 player at 4100 (not TM — not top-10): trackmaster_limit=999999
-        # effective spread = 4100 - 3700 = 400 → bucket 300
+    def test_player_above_4000_spread_uses_max_elo(self, map_obj):
+        # spread = 4100 - 3700 = 400 → bucket 300
         self._game(map_obj, min_elo=3700, max_elo=4100, trackmaster_limit=999999)
-        data = self._call()
-        assert self._bucket(data, 300)["count"] == 1
-
-    def test_tm_limit_of_4000_spread_400_is_bucket_300(self, map_obj):
-        self._game(map_obj, min_elo=3600, max_elo=5000, trackmaster_limit=4000)
         data = self._call()
         assert self._bucket(data, 300)["count"] == 1
 

@@ -1,38 +1,25 @@
+import subprocess
 import sys
-
-import pymysql
 
 from settings import DATABASE_NAME, DATABASE_HOST, DATABASE_USER, DATABASE_PASSWORD
 
-# useful when using docker database
-conn = pymysql.connect(
-    host=DATABASE_HOST,
-    user=DATABASE_USER,
-    password=DATABASE_PASSWORD,
-    database=DATABASE_NAME,
-)
+sql_file = f"sql_scripts/{sys.argv[1]}.sql"
+print(f"Running script {sql_file}...")
 
+with open(sql_file, "rb") as f:
+    result = subprocess.run(
+        [
+            "mysql",
+            f"-h{DATABASE_HOST}",
+            f"-u{DATABASE_USER}",
+            f"-p{DATABASE_PASSWORD}",
+            DATABASE_NAME,
+        ],
+        stdin=f,
+    )
 
-def parse_sql(data):
-    stmt = ""
-    stmts = []
-    for line in data:
-        if line:
-            if line.startswith("--"):
-                continue
-            stmt += line.strip() + " "
-            if stmt.strip().endswith(";"):
-                stmts.append(stmt.strip())
-                stmt = ""
-    return stmts
+if result.returncode != 0:
+    print("Script failed")
+    sys.exit(result.returncode)
 
-
-with open(f"sql_scripts/{sys.argv[1]}.sql") as f:
-    print("Running script...")
-    with conn.cursor() as cursor:
-        queries = parse_sql(f.read().splitlines())
-        for query in queries:
-            print(query)
-            cursor.execute(query)
-    conn.close()
-    print("Script ran successfully")
+print("Script ran successfully")

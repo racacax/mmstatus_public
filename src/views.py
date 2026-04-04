@@ -382,6 +382,8 @@ class APIViews(RouteDescriber):
                 Player.uuid,
                 Player.club_tag,
                 Zone.country_alpha3,
+                Zone.name.alias("country_name"),
+                Zone.file_name,
             )
             .join(Player, on=(Player.uuid == PlayerSeason.player_id))
             .join(Zone, JOIN.LEFT_OUTER, on=(Zone.id == Player.country_id))
@@ -401,7 +403,12 @@ class APIViews(RouteDescriber):
                     "name": r["name"],
                     "uuid": str(r["uuid"]),
                     "club_tag": r["club_tag"],
-                    "country": r["country_alpha3"],
+                    "country": r["country_alpha3"]
+                    and {
+                        "name": r["country_name"],
+                        "file_name": r["file_name"],
+                        "alpha3": r["country_alpha3"],
+                    },
                 }
                 for r in rows
             ],

@@ -10,6 +10,7 @@ from src.threads.update_maps import UpdateMapsThread
 from src.threads.update_match_elo import UpdateMatchEloThread
 from src.threads.update_matches import UpdateMatchesThread
 from src.threads.update_player_countries import UpdatePlayerCountriesThread
+from src.threads.update_player_regions import UpdatePlayerRegionsThread
 from src.threads.update_stats_per_rank import UpdateStatsPerRank
 from src.threads.update_top_player_positions import UpdateTopPlayersPositionThread
 from src.threads.update_player_ranks import UpdatePlayerRanksThread
@@ -37,6 +38,7 @@ if ENABLE_THREADS:
         UpdateMapsThread,
         UpdatePlayerZonesThread,
         UpdatePlayerCountriesThread,
+        UpdatePlayerRegionsThread,
         UpdatePlayerRanksThread,
         UpdateMatchesThread,
         UpdateMatchEloThread,
