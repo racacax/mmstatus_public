@@ -463,6 +463,30 @@ class APIViews(RouteDescriber):
 
     @staticmethod
     @route(
+        name="maps_rank_distribution",
+        summary="Map rank distribution",
+        description="Returns how many matches per rank were played on a given map for a season. "
+        "Each match is counted once, based on min_elo.",
+    )
+    def get_maps_rank_distribution(
+        map_uid: Option(str, description="UID of the map") = "SummerGames2024_Race_A",
+        season: Option(
+            int,
+            description="ID representing a season (provided by the seasons endpoint)",
+            formatted_default="<current season>",
+        ) = -1,
+    ):
+        if season == -1:
+            season = Season.get_current_season().id
+        safe_uid = map_uid.replace("/", "").replace("\\", "").replace("~", "")
+        try:
+            with open(f"cache/maps_rank_distribution/{season}/{safe_uid}.txt", "r") as f:
+                return 200, json.loads(f.read())
+        except FileNotFoundError:
+            return 404, {"message": f"No data found for map '{map_uid}' in season {season}."}
+
+    @staticmethod
+    @route(
         name="country_h2h",
         summary="Country head-to-head records",
         description="Win/loss records for a given country against all others."

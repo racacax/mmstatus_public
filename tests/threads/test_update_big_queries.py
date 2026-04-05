@@ -30,6 +30,7 @@ from src.threads.update_big_queries import (
     get_rank_distribution_func,
     get_seasons_to_update,
     get_top_100_per_country_func,
+    get_maps_rank_distribution_func,
 )
 from src.utils import RANKS
 
@@ -2913,3 +2914,352 @@ class TestGetTop100PerCountryFunc:
         self._call(tmp_path, season)
         row = self._read(tmp_path, season, "FRA")["results"][0]
         assert row["region"] == {"name": "Ile-de-France", "file_name": "FRA_IDF"}
+
+
+# ── get_maps_rank_distribution_func ──────────────────────────────────────────
+
+
+class TestGetMapsRankDistribution:
+
+    @pytest.fixture
+    def season(self):
+        now = datetime.now()
+        return Season.create(name="MRD_S", start_time=now - timedelta(days=30), end_time=now + timedelta(days=30))
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="MRD_MAP_001", name="Test Map")
+
+    def _make_game(self, map_obj, season, min_elo, trackmaster_limit=999999):
+        return Game.create(
+            map=map_obj,
+            min_elo=min_elo,
+            max_elo=min_elo + 300,
+            trackmaster_limit=trackmaster_limit,
+            is_finished=True,
+            time=season.start_time + timedelta(days=1),
+        )
+
+    def _call(self, tmp_path, season):
+        func = get_maps_rank_distribution_func(str(tmp_path) + "/", season)
+        func(None, None)
+
+    def _read(self, tmp_path, season, map_uid):
+        with open(tmp_path / f"maps_rank_distribution/{season.id}/{map_uid}.txt") as f:
+            return json.loads(f.read())
+
+    def _count(self, data, key):
+        return next(r["count"] for r in data["results"] if r["rank"] == key)
+
+    def test_file_created_for_map_with_games(self, tmp_path, season, map_obj):
+        self._make_game(map_obj, season, min_elo=1000)
+        self._call(tmp_path, season)
+        path = tmp_path / f"maps_rank_distribution/{season.id}/MRD_MAP_001.txt"
+        assert path.exists()
+
+    def test_no_file_when_no_finished_games(self, tmp_path, season, map_obj):
+        # Unfinished game — must not produce a file
+        Game.create(
+            map=map_obj,
+            min_elo=1000,
+            max_elo=1300,
+            is_finished=False,
+            time=season.start_time + timedelta(days=1),
+        )
+        self._call(tmp_path, season)
+        path = tmp_path / f"maps_rank_distribution/{season.id}/MRD_MAP_001.txt"
+        assert not path.exists()
+
+    def test_m1_game_counted_in_m1_only(self, tmp_path, season, map_obj):
+        self._make_game(map_obj, season, min_elo=3000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season, "MRD_MAP_001")
+        assert self._count(data, "m1") == 1
+        assert self._count(data, "m2") == 0
+        assert self._count(data, "g3") == 0
+
+    def test_tm_game_requires_min_elo_gte_trackmaster_limit(self, tmp_path, season, map_obj):
+        # min_elo=4100, trackmaster_limit=4000 → TM
+        self._make_game(map_obj, season, min_elo=4100, trackmaster_limit=4000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season, "MRD_MAP_001")
+        assert self._count(data, "tm") == 1
+        assert self._count(data, "m3") == 0
+
+    def test_m3_game_has_min_elo_below_trackmaster_limit(self, tmp_path, season, map_obj):
+        # min_elo=3700, trackmaster_limit=4000 → M3 (3700 < 4000)
+        self._make_game(map_obj, season, min_elo=3700, trackmaster_limit=4000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season, "MRD_MAP_001")
+        assert self._count(data, "m3") == 1
+        assert self._count(data, "tm") == 0
+
+    def test_m3_boundary_exactly_at_trackmaster_limit(self, tmp_path, season, map_obj):
+        # min_elo == trackmaster_limit → TM (>= condition is inclusive)
+        self._make_game(map_obj, season, min_elo=4000, trackmaster_limit=4000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season, "MRD_MAP_001")
+        assert self._count(data, "tm") == 1
+        assert self._count(data, "m3") == 0
+
+    def test_multiple_games_on_same_map_aggregated(self, tmp_path, season, map_obj):
+        self._make_game(map_obj, season, min_elo=1000)  # s1
+        self._make_game(map_obj, season, min_elo=1000)  # s1 again
+        self._make_game(map_obj, season, min_elo=2000)  # g1
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season, "MRD_MAP_001")
+        assert self._count(data, "s1") == 2
+        assert self._count(data, "g1") == 1
+
+    def test_games_outside_season_excluded(self, tmp_path, season, map_obj):
+        Game.create(
+            map=map_obj,
+            min_elo=1000,
+            max_elo=1300,
+            is_finished=True,
+            time=season.end_time + timedelta(days=5),  # after season
+        )
+        self._call(tmp_path, season)
+        path = tmp_path / f"maps_rank_distribution/{season.id}/MRD_MAP_001.txt"
+        assert not path.exists()
+
+    def test_result_contains_map_uid_and_name(self, tmp_path, season, map_obj):
+        self._make_game(map_obj, season, min_elo=1000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season, "MRD_MAP_001")
+        assert data["map_uid"] == "MRD_MAP_001"
+        assert data["map_name"] == "Test Map"
+
+    def test_separate_files_for_separate_maps(self, tmp_path, season, map_obj):
+        map2 = Map.create(uid="MRD_MAP_002", name="Map 2")
+        self._make_game(map_obj, season, min_elo=1000)
+        self._make_game(map2, season, min_elo=2000)
+        self._call(tmp_path, season)
+        d1 = self._read(tmp_path, season, "MRD_MAP_001")
+        d2 = self._read(tmp_path, season, "MRD_MAP_002")
+        assert self._count(d1, "s1") == 1
+        assert self._count(d1, "g1") == 0
+        assert self._count(d2, "g1") == 1
+        assert self._count(d2, "s1") == 0
+
+
+class TestGetMapsRankDistributionExhaustive:
+    """Exhaustive coverage: all 13 ranks, boundaries, edge cases, isolation."""
+
+    @pytest.fixture
+    def season(self):
+        now = datetime.now()
+        return Season.create(name="MRDE_S", start_time=now - timedelta(days=30), end_time=now + timedelta(days=30))
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="MRDE_MAP_001", name="Exhaustive Map")
+
+    def _game(self, map_obj, season, min_elo, trackmaster_limit=999999):
+        return Game.create(
+            map=map_obj,
+            min_elo=min_elo,
+            max_elo=min_elo + 50,
+            trackmaster_limit=trackmaster_limit,
+            is_finished=True,
+            time=season.start_time + timedelta(days=1),
+        )
+
+    def _call(self, tmp_path, season):
+        get_maps_rank_distribution_func(str(tmp_path) + "/", season)(None, None)
+
+    def _read(self, tmp_path, season):
+        with open(tmp_path / f"maps_rank_distribution/{season.id}/MRDE_MAP_001.txt") as f:
+            return json.loads(f.read())
+
+    def _count(self, data, key):
+        return next(r["count"] for r in data["results"] if r["rank"] == key)
+
+    def _all_counts(self, data):
+        return {r["rank"]: r["count"] for r in data["results"]}
+
+    # ── each rank individually ────────────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        "min_elo,expected_key",
+        [
+            (0, "b1"),
+            (150, "b1"),
+            (300, "b2"),
+            (450, "b2"),
+            (600, "b3"),
+            (800, "b3"),
+            (1000, "s1"),
+            (1150, "s1"),
+            (1300, "s2"),
+            (1450, "s2"),
+            (1600, "s3"),
+            (1800, "s3"),
+            (2000, "g1"),
+            (2200, "g1"),
+            (2300, "g2"),
+            (2450, "g2"),
+            (2600, "g3"),
+            (2800, "g3"),
+            (3000, "m1"),
+            (3150, "m1"),
+            (3300, "m2"),
+            (3450, "m2"),
+            (3600, "m3"),  # trackmaster_limit=999999 >> 3600 → M3
+            (3800, "m3"),
+        ],
+    )
+    def test_each_rank_assigned_correctly(self, tmp_path, season, map_obj, min_elo, expected_key):
+        self._game(map_obj, season, min_elo=min_elo)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season)
+        counts = self._all_counts(data)
+        assert counts[expected_key] == 1
+        # every other rank must be 0
+        assert sum(v for k, v in counts.items() if k != expected_key) == 0
+
+    def test_tm_when_min_elo_equals_trackmaster_limit(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, min_elo=4000, trackmaster_limit=4000)
+        self._call(tmp_path, season)
+        counts = self._all_counts(self._read(tmp_path, season))
+        assert counts["tm"] == 1
+        assert sum(v for k, v in counts.items() if k != "tm") == 0
+
+    def test_tm_when_min_elo_above_trackmaster_limit(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, min_elo=4200, trackmaster_limit=4000)
+        self._call(tmp_path, season)
+        counts = self._all_counts(self._read(tmp_path, season))
+        assert counts["tm"] == 1
+        assert sum(v for k, v in counts.items() if k != "tm") == 0
+
+    def test_m3_just_below_trackmaster_limit(self, tmp_path, season, map_obj):
+        # min_elo=3999, trackmaster_limit=4000 → M3 (3999 < 4000)
+        self._game(map_obj, season, min_elo=3999, trackmaster_limit=4000)
+        self._call(tmp_path, season)
+        counts = self._all_counts(self._read(tmp_path, season))
+        assert counts["m3"] == 1
+        assert counts["tm"] == 0
+
+    # ── exact rank lower boundaries ───────────────────────────────────────────
+
+    @pytest.mark.parametrize(
+        "min_elo,key",
+        [
+            (300, "b2"),
+            (600, "b3"),
+            (1000, "s1"),
+            (1300, "s2"),
+            (1600, "s3"),
+            (2000, "g1"),
+            (2300, "g2"),
+            (2600, "g3"),
+            (3000, "m1"),
+            (3300, "m2"),
+            (3600, "m3"),
+        ],
+    )
+    def test_lower_boundary_belongs_to_rank(self, tmp_path, season, map_obj, min_elo, key):
+        self._game(map_obj, season, min_elo=min_elo)
+        self._call(tmp_path, season)
+        assert self._count(self._read(tmp_path, season), key) == 1
+
+    @pytest.mark.parametrize(
+        "min_elo,key",
+        [
+            (299, "b1"),
+            (599, "b2"),
+            (999, "b3"),
+            (1299, "s1"),
+            (1599, "s2"),
+            (1999, "s3"),
+            (2299, "g1"),
+            (2599, "g2"),
+            (2999, "g3"),
+            (3299, "m1"),
+            (3599, "m2"),
+        ],
+    )
+    def test_one_below_boundary_belongs_to_lower_rank(self, tmp_path, season, map_obj, min_elo, key):
+        self._game(map_obj, season, min_elo=min_elo)
+        self._call(tmp_path, season)
+        assert self._count(self._read(tmp_path, season), key) == 1
+
+    # ── one-game-one-count guarantee ──────────────────────────────────────────
+
+    def test_each_game_counted_exactly_once(self, tmp_path, season, map_obj):
+        # Three games at three different ranks
+        self._game(map_obj, season, min_elo=500)  # b3
+        self._game(map_obj, season, min_elo=1500)  # s2
+        self._game(map_obj, season, min_elo=3000)  # m1
+        self._call(tmp_path, season)
+        counts = self._all_counts(self._read(tmp_path, season))
+        assert sum(counts.values()) == 3  # exactly 3 total, no double-counting
+
+    # ── exclusions ────────────────────────────────────────────────────────────
+
+    def test_game_with_min_elo_minus_one_excluded(self, tmp_path, season, map_obj):
+        Game.create(
+            map=map_obj,
+            min_elo=-1,
+            max_elo=-1,
+            is_finished=True,
+            time=season.start_time + timedelta(days=1),
+        )
+        self._call(tmp_path, season)
+        assert not (tmp_path / f"maps_rank_distribution/{season.id}/MRDE_MAP_001.txt").exists()
+
+    def test_game_before_season_start_excluded(self, tmp_path, season, map_obj):
+        Game.create(
+            map=map_obj,
+            min_elo=1000,
+            max_elo=1300,
+            is_finished=True,
+            time=season.start_time - timedelta(days=1),
+        )
+        self._call(tmp_path, season)
+        assert not (tmp_path / f"maps_rank_distribution/{season.id}/MRDE_MAP_001.txt").exists()
+
+    def test_game_after_season_end_excluded(self, tmp_path, season, map_obj):
+        Game.create(
+            map=map_obj,
+            min_elo=1000,
+            max_elo=1300,
+            is_finished=True,
+            time=season.end_time + timedelta(days=1),
+        )
+        self._call(tmp_path, season)
+        assert not (tmp_path / f"maps_rank_distribution/{season.id}/MRDE_MAP_001.txt").exists()
+
+    def test_unfinished_game_excluded(self, tmp_path, season, map_obj):
+        Game.create(
+            map=map_obj,
+            min_elo=1000,
+            max_elo=1300,
+            is_finished=False,
+            time=season.start_time + timedelta(days=1),
+        )
+        self._call(tmp_path, season)
+        assert not (tmp_path / f"maps_rank_distribution/{season.id}/MRDE_MAP_001.txt").exists()
+
+    # ── results structure ─────────────────────────────────────────────────────
+
+    def test_results_contain_all_13_ranks(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, min_elo=1000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season)
+        keys = {r["rank"] for r in data["results"]}
+        assert keys == {r["key"] for r in RANKS}
+
+    def test_results_contain_rank_name(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, min_elo=1000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season)
+        row = next(r for r in data["results"] if r["rank"] == "s1")
+        assert row["name"] == "Silver I"
+
+    def test_last_updated_field_present(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, min_elo=1000)
+        self._call(tmp_path, season)
+        data = self._read(tmp_path, season)
+        assert "last_updated" in data
+        assert isinstance(data["last_updated"], float)

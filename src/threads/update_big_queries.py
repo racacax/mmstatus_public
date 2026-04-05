@@ -612,6 +612,62 @@ def get_top_100_per_country_func(path, season):
     return get_top_100_per_country_0
 
 
+def get_maps_rank_distribution_func(path, season):
+    def get_maps_rank_distribution_0(_, __):
+        season_path = path + f"maps_rank_distribution/{season.id}/"
+        if not os.path.exists(season_path):
+            os.makedirs(season_path)
+
+        rank_cases = []
+        for i, rank in enumerate(RANKS):
+            if i == 0:  # Trackmaster: min_elo >= trackmaster_limit
+                cond = Game.min_elo >= Game.trackmaster_limit
+            elif i == 1:  # Master III: min_elo >= 3600 AND min_elo < trackmaster_limit
+                cond = (Game.min_elo >= 3600) & (Game.min_elo < Game.trackmaster_limit)
+            else:  # All others: min_elo in [rank.min_elo, next_rank.min_elo)
+                cond = (Game.min_elo >= rank["min_elo"]) & (Game.min_elo < RANKS[i - 1]["min_elo"])
+            rank_cases.append((rank, fn.SUM(Case(None, [(cond, 1)], 0))))
+
+        rows = (
+            Game.select(
+                Map.uid.alias("map_uid"),
+                Map.name.alias("map_name"),
+                *[expr.alias(rank["key"]) for rank, expr in rank_cases],
+            )
+            .join(Map)
+            .where(
+                Game.time >= season.start_time,
+                Game.time <= season.end_time,
+                Game.is_finished == True,
+                Game.min_elo != -1,
+            )
+            .group_by(Map.uid)
+            .dicts()
+        )
+
+        for row in rows:
+            map_uid = row["map_uid"]
+            safe_uid = map_uid.replace("/", "").replace("\\", "").replace("~", "")
+            f = open(season_path + safe_uid + ".txt", "w")
+            f.write(
+                json.dumps(
+                    {
+                        "map_uid": map_uid,
+                        "map_name": row["map_name"],
+                        "results": [
+                            {"rank": rank["key"], "name": rank["name"], "count": int(row[rank["key"]] or 0)}
+                            for rank, _ in rank_cases
+                        ],
+                        "last_updated": datetime.now().timestamp(),
+                    },
+                    cls=CustomJSONEncoder,
+                )
+            )
+            f.close()
+
+    return get_maps_rank_distribution_0
+
+
 def get_activity_players_per_country_funcs():
     players_per_country = []
     for rank in RANKS:
@@ -1039,6 +1095,7 @@ class UpdateBigQueriesThread(AbstractThread):
             *get_leaderboards_funcs(season and season.id or 1),
             get_maps_statistics,
             get_top_100_per_country_func(self.path, season),
+            get_maps_rank_distribution_func(self.path, season),
             *get_country_h2h_funcs(self.path, season),
             get_rank_distribution_func(season),
             *get_activity_per_country_funcs(),
