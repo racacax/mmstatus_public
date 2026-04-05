@@ -2,7 +2,7 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from models import Player
+from models import Player, PlayerSeason, Season
 from src.log_utils import create_logger
 from src.services import NadeoOauth, NadeoCore
 from src.threads.abstract_thread import AbstractThread
@@ -27,11 +27,17 @@ class UpdatePlayersThread(AbstractThread):
             club_tags = NadeoCore.get_player_club_tags(ids)
             logger.info("get_player_club_tags response", extra={"response": club_tags})
             club_tags = {entry["accountId"]: entry["clubTag"] for entry in (club_tags or [])}
+            season = Season.get_current_season()
             for p in players:
                 p.name = names.get(str(p.uuid), "Name unknown")
                 p.club_tag = club_tags.get(str(p.uuid), None)
                 p.last_name_update = datetime.now()
                 p.save()
+                if season:
+                    PlayerSeason.update(club_tag=p.club_tag).where(
+                        PlayerSeason.player == p,
+                        PlayerSeason.season == season,
+                    ).execute()
         except Exception as e:
             self._record_error()
             logger.error(

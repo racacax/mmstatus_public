@@ -22,8 +22,8 @@ def make_player(uid, name="Player", country=None, club_tag=None):
     return Player.create(uuid=UUID(uid), name=name, country=country, club_tag=club_tag)
 
 
-def make_player_season(player, season, points, rank):
-    return PlayerSeason.create(player=player, season=season, points=points, rank=rank)
+def make_player_season(player, season, points, rank, club_tag=None):
+    return PlayerSeason.create(player=player, season=season, points=points, rank=rank, club_tag=club_tag)
 
 
 def make_zone(uid, name, alpha3):
@@ -238,7 +238,7 @@ class TestGetGlobalLeaderboard:
     def test_club_tag_returned(self):
         s = make_season()
         p = make_player("aaaaaaaa-6000-0000-0000-000000000001", "Tagged", club_tag="CLUB")
-        make_player_season(p, s, points=1000, rank=1)
+        make_player_season(p, s, points=1000, rank=1, club_tag="CLUB")
         _, data = call(season=s.id)
         assert data["results"][0]["club_tag"] == "CLUB"
 

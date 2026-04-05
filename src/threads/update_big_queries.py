@@ -70,14 +70,11 @@ def get_clubs_leaderboard(season_id):
     points_repartition = distribute_points(max_points=10000, num_people=total_players)
     player_seasons = (
         PlayerSeason.select(
-            Player.uuid,
-            Player.club_tag,
+            PlayerSeason.club_tag,
             PlayerSeason.rank,
         )
         .join(Season)
-        .switch(PlayerSeason)
-        .join(Player)
-        .where(Season.id == season_id, PlayerSeason.rank != 0, Player.club_tag != None)
+        .where(Season.id == season_id, PlayerSeason.rank != 0, PlayerSeason.club_tag != None)
         .order_by(PlayerSeason.rank.asc())
         .paginate(1, total_players)
     ).dicts()
@@ -154,6 +151,10 @@ def get_players_statistics(o_by, min_date, max_date):
         PlayerGame.select(
             Player.name,
             Player.uuid,
+            Player.club_tag,
+            Zone.country_alpha3,
+            Zone.name.alias("country_name"),
+            Zone.file_name,
             wins.alias("wins"),
             losses.alias("losses"),
             played.alias("played"),
@@ -162,8 +163,9 @@ def get_players_statistics(o_by, min_date, max_date):
         .join(Game)
         .switch(PlayerGame)
         .join(Player)
+        .join(Zone, JOIN.LEFT_OUTER, on=(Zone.id == Player.country_id), attr="country_zone")
         .where(Game.time >= min_date, Game.time <= max_date)
-        .group_by(Player.uuid)
+        .group_by(Player.uuid, Player.club_tag, Zone.country_alpha3, Zone.name, Zone.file_name)
         .order_by(order_by.desc())
         .paginate(1, 100)
         .dicts()
@@ -175,6 +177,13 @@ def get_players_statistics(o_by, min_date, max_date):
             {
                 "name": q["name"],
                 "uuid": str(q["uuid"]),
+                "club_tag": q["club_tag"],
+                "country": q["country_alpha3"]
+                and {
+                    "name": q["country_name"],
+                    "file_name": q["file_name"],
+                    "alpha3": q["country_alpha3"],
+                },
                 "played": int(q["played"] or 0),
                 "wins": int(q["wins"] or 0),
                 "losses": int(q["losses"] or 0),
@@ -551,6 +560,7 @@ def get_top_100_per_country_func(path, season):
                 PlayerSeason.select(
                     Player.name,
                     Player.uuid,
+                    PlayerSeason.club_tag,
                     PlayerSeason.rank,
                     PlayerSeason.points,
                     RegionZone.name.alias("region_name"),
@@ -577,6 +587,7 @@ def get_top_100_per_country_func(path, season):
                                 {
                                     "name": p["name"],
                                     "uuid": p["uuid"],
+                                    "club_tag": p["club_tag"],
                                     "rank": p["rank"],
                                     "points": p["points"],
                                     "region": p["region_name"]

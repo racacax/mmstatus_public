@@ -95,6 +95,7 @@ class PlayerSeason(BaseModel):
     player = ForeignKeyField(Player, backref="player_seasons")
     points = IntegerField(default=0, index=True)
     rank = IntegerField(default=99999, index=True)
+    club_tag = CharField(default=None, null=True, max_length=64)
 
 
 class RankStatRollup(BaseModel):

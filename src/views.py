@@ -378,9 +378,9 @@ class APIViews(RouteDescriber):
             PlayerSeason.select(
                 PlayerSeason.rank,
                 PlayerSeason.points,
+                PlayerSeason.club_tag,
                 Player.name,
                 Player.uuid,
-                Player.club_tag,
                 Zone.country_alpha3,
                 Zone.name.alias("country_name"),
                 Zone.file_name,

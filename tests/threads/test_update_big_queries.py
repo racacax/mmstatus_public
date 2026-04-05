@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 
 import pytest
 
-from models import Game, Map, Player, PlayerGame, Season, Zone
+from models import Game, Map, Player, PlayerGame, PlayerSeason, Season, Zone
 from scripts.recompute_big_queries import recompute
 from src.threads.update_big_queries import (
     H2H_ELOS,
@@ -13,6 +13,7 @@ from src.threads.update_big_queries import (
     get_activity_heatmap,
     get_activity_heatmap_funcs,
     get_activity_per_day_of_the_week,
+    get_clubs_leaderboard,
     get_country_h2h_func,
     get_country_h2h_funcs,
     get_cross_rank_frequency,
@@ -25,8 +26,10 @@ from src.threads.update_big_queries import (
     get_new_players_per_week_funcs,
     get_player_retention,
     get_player_retention_funcs,
+    get_players_statistics,
     get_rank_distribution_func,
     get_seasons_to_update,
+    get_top_100_per_country_func,
 )
 from src.utils import RANKS
 
@@ -2732,3 +2735,181 @@ class TestCrossRankFrequencyRegistration:
         names = [q.__name__ for q in UpdateBigQueriesThread().get_queries(s)]
         crf_names = [n for n in names if n.startswith("get_cross_rank_frequency_")]
         assert len(crf_names) == len(RANKS)
+
+
+# ── get_players_statistics ────────────────────────────────────────────────────
+
+
+class TestGetPlayersStatistics:
+
+    BASE = datetime(2024, 6, 1, 12, 0)
+    WINDOW_END = datetime(2024, 12, 31)
+
+    @pytest.fixture
+    def map_obj(self):
+        return Map.create(uid="PS_MAP", name="PS Map")
+
+    @pytest.fixture
+    def zone(self):
+        return Zone.create(uuid="zps-001", name="France", country_alpha3="FRA", file_name="FRA")
+
+    @pytest.fixture
+    def player(self, zone):
+        from uuid import UUID
+
+        return Player.create(
+            uuid=UUID("aaaaaaaa-0000-0000-0000-000000000090"),
+            name="PSPlayer",
+            club_tag="PSTAG",
+            points=1000,
+            country=zone,
+        )
+
+    @pytest.fixture
+    def player_no_country(self):
+        from uuid import UUID
+
+        return Player.create(
+            uuid=UUID("bbbbbbbb-0000-0000-0000-000000000091"),
+            name="PSNoCountry",
+            points=1000,
+        )
+
+    def _game(self, map_obj):
+        return Game.create(
+            map=map_obj,
+            is_finished=True,
+            time=self.BASE + timedelta(days=1),
+            average_elo=1000,
+        )
+
+    def _pg(self, player, game, is_win=False):
+        return PlayerGame.create(player=player, game=game, is_win=is_win)
+
+    def _call(self, o_by="played"):
+        return json.loads(get_players_statistics(o_by, self.BASE, self.WINDOW_END))
+
+    def test_result_row_has_expected_keys(self, map_obj, player):
+        self._pg(player, self._game(map_obj))
+        row = self._call()["results"][0]
+        assert set(row.keys()) == {"name", "uuid", "club_tag", "country", "played", "wins", "losses", "mvps"}
+
+    def test_club_tag_is_returned(self, map_obj, player):
+        self._pg(player, self._game(map_obj))
+        assert self._call()["results"][0]["club_tag"] == "PSTAG"
+
+    def test_club_tag_is_none_when_not_set(self, map_obj, player_no_country):
+        self._pg(player_no_country, self._game(map_obj))
+        assert self._call()["results"][0]["club_tag"] is None
+
+    def test_country_is_full_object(self, map_obj, player):
+        self._pg(player, self._game(map_obj))
+        country = self._call()["results"][0]["country"]
+        assert country == {"name": "France", "file_name": "FRA", "alpha3": "FRA"}
+
+    def test_country_is_none_when_not_set(self, map_obj, player_no_country):
+        self._pg(player_no_country, self._game(map_obj))
+        assert self._call()["results"][0]["country"] is None
+
+
+# ── get_clubs_leaderboard ─────────────────────────────────────────────────────
+
+
+class TestGetClubsLeaderboard:
+
+    @pytest.fixture
+    def season(self):
+        now = datetime.now()
+        return Season.create(name="CL_S", start_time=now - timedelta(days=30), end_time=now + timedelta(days=30))
+
+    @pytest.fixture
+    def player(self):
+        from uuid import UUID
+
+        return Player.create(
+            uuid=UUID("aaaaaaaa-0000-0000-0000-000000000092"),
+            name="CLPlayer",
+            club_tag="CURRENT_TAG",
+        )
+
+    def _call(self, season):
+        return json.loads(get_clubs_leaderboard(season.id))
+
+    def test_uses_player_season_club_tag_not_player_club_tag(self, season, player):
+        # PlayerSeason has a different (older) club_tag than Player — should use PlayerSeason's
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000, club_tag="SEASON_TAG")
+        result = self._call(season)
+        tags = [r["name"] for r in result["results"]]
+        assert "SEASON_TAG" in tags
+        assert "CURRENT_TAG" not in tags
+
+    def test_player_with_no_season_club_tag_excluded(self, season, player):
+        # PlayerSeason.club_tag is NULL → player must not appear
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000, club_tag=None)
+        result = self._call(season)
+        assert result["results"] == []
+
+
+# ── get_top_100_per_country_func ──────────────────────────────────────────────
+
+
+class TestGetTop100PerCountryFunc:
+
+    @pytest.fixture
+    def season(self):
+        now = datetime.now()
+        return Season.create(name="T100_S", start_time=now - timedelta(days=30), end_time=now + timedelta(days=30))
+
+    @pytest.fixture
+    def country_zone(self):
+        return Zone.create(
+            uuid="aaaaaaaa-0000-0000-0000-000000000100", name="France", country_alpha3="FRA", file_name="FRA"
+        )
+
+    @pytest.fixture
+    def region_zone(self, country_zone):
+        return Zone.create(
+            uuid="aaaaaaaa-0000-0000-0000-000000000101", name="Ile-de-France", file_name="FRA_IDF", parent=country_zone
+        )
+
+    @pytest.fixture
+    def player(self, country_zone):
+        from uuid import UUID
+
+        return Player.create(
+            uuid=UUID("aaaaaaaa-0000-0000-0000-000000000093"),
+            name="T100Player",
+            club_tag="OLD_TAG",
+            country=country_zone,
+        )
+
+    def _call(self, tmp_path, season):
+        func = get_top_100_per_country_func(str(tmp_path) + "/", season)
+        func(None, None)
+        return tmp_path
+
+    def _read(self, tmp_path, season, alpha3):
+        with open(tmp_path / f"top_100_by_country/{season.id}/{alpha3}.txt") as f:
+            return json.loads(f.read())
+
+    def test_club_tag_from_player_season_not_player(self, tmp_path, season, player):
+        # PlayerSeason.club_tag differs from Player.club_tag → file must use PlayerSeason value
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000, club_tag="SEASON_TAG")
+        self._call(tmp_path, season)
+        row = self._read(tmp_path, season, "FRA")["results"][0]
+        assert row["club_tag"] == "SEASON_TAG"
+        assert row["club_tag"] != "OLD_TAG"
+
+    def test_region_is_none_when_not_set(self, tmp_path, season, player):
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000)
+        self._call(tmp_path, season)
+        row = self._read(tmp_path, season, "FRA")["results"][0]
+        assert row["region"] is None
+
+    def test_region_is_object_when_set(self, tmp_path, season, player, region_zone):
+        player.region = region_zone
+        player.save()
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000)
+        self._call(tmp_path, season)
+        row = self._read(tmp_path, season, "FRA")["results"][0]
+        assert row["region"] == {"name": "Ile-de-France", "file_name": "FRA_IDF"}
