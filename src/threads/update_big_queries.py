@@ -620,12 +620,12 @@ def get_maps_rank_distribution_func(path, season):
 
         rank_cases = []
         for i, rank in enumerate(RANKS):
-            if i == 0:  # Trackmaster: min_elo >= trackmaster_limit
-                cond = Game.min_elo >= Game.trackmaster_limit
-            elif i == 1:  # Master III: min_elo >= 3600 AND min_elo < trackmaster_limit
-                cond = (Game.min_elo >= 3600) & (Game.min_elo < Game.trackmaster_limit)
-            else:  # All others: min_elo in [rank.min_elo, next_rank.min_elo)
-                cond = (Game.min_elo >= rank["min_elo"]) & (Game.min_elo < RANKS[i - 1]["min_elo"])
+            if i == 0:  # Trackmaster: average_elo >= trackmaster_limit
+                cond = Game.average_elo >= Game.trackmaster_limit
+            elif i == 1:  # Master III: average_elo >= 3600 AND average_elo < trackmaster_limit
+                cond = (Game.average_elo >= 3600) & (Game.average_elo < Game.trackmaster_limit)
+            else:  # All others: average_elo in [rank.min_elo, next_rank.min_elo)
+                cond = (Game.average_elo >= rank["min_elo"]) & (Game.average_elo < RANKS[i - 1]["min_elo"])
             rank_cases.append((rank, fn.SUM(Case(None, [(cond, 1)], 0))))
 
         rows = (
@@ -639,15 +639,17 @@ def get_maps_rank_distribution_func(path, season):
                 Game.time >= season.start_time,
                 Game.time <= season.end_time,
                 Game.is_finished == True,
-                Game.min_elo != -1,
+                Game.average_elo != -1,
             )
             .group_by(Map.uid)
             .dicts()
         )
 
+        maps_gathered = []
         for row in rows:
             map_uid = row["map_uid"]
             safe_uid = map_uid.replace("/", "").replace("\\", "").replace("~", "")
+            maps_gathered.append({"map_uid": map_uid, "map_name": row["map_name"]})
             f = open(season_path + safe_uid + ".txt", "w")
             f.write(
                 json.dumps(
@@ -664,6 +666,10 @@ def get_maps_rank_distribution_func(path, season):
                 )
             )
             f.close()
+        return json.dumps(
+            {"results": maps_gathered, "last_updated": datetime.now().timestamp()},
+            cls=CustomJSONEncoder,
+        )
 
     return get_maps_rank_distribution_0
 

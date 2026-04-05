@@ -2930,11 +2930,12 @@ class TestGetMapsRankDistribution:
     def map_obj(self):
         return Map.create(uid="MRD_MAP_001", name="Test Map")
 
-    def _make_game(self, map_obj, season, min_elo, trackmaster_limit=999999):
+    def _make_game(self, map_obj, season, average_elo, trackmaster_limit=999999):
         return Game.create(
             map=map_obj,
-            min_elo=min_elo,
-            max_elo=min_elo + 300,
+            average_elo=average_elo,
+            min_elo=average_elo - 150,
+            max_elo=average_elo + 150,
             trackmaster_limit=trackmaster_limit,
             is_finished=True,
             time=season.start_time + timedelta(days=1),
@@ -2952,7 +2953,7 @@ class TestGetMapsRankDistribution:
         return next(r["count"] for r in data["results"] if r["rank"] == key)
 
     def test_file_created_for_map_with_games(self, tmp_path, season, map_obj):
-        self._make_game(map_obj, season, min_elo=1000)
+        self._make_game(map_obj, season, average_elo=1000)
         self._call(tmp_path, season)
         path = tmp_path / f"maps_rank_distribution/{season.id}/MRD_MAP_001.txt"
         assert path.exists()
@@ -2961,8 +2962,9 @@ class TestGetMapsRankDistribution:
         # Unfinished game — must not produce a file
         Game.create(
             map=map_obj,
-            min_elo=1000,
-            max_elo=1300,
+            average_elo=1000,
+            min_elo=850,
+            max_elo=1150,
             is_finished=False,
             time=season.start_time + timedelta(days=1),
         )
@@ -2971,41 +2973,41 @@ class TestGetMapsRankDistribution:
         assert not path.exists()
 
     def test_m1_game_counted_in_m1_only(self, tmp_path, season, map_obj):
-        self._make_game(map_obj, season, min_elo=3000)
+        self._make_game(map_obj, season, average_elo=3150)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season, "MRD_MAP_001")
         assert self._count(data, "m1") == 1
         assert self._count(data, "m2") == 0
         assert self._count(data, "g3") == 0
 
-    def test_tm_game_requires_min_elo_gte_trackmaster_limit(self, tmp_path, season, map_obj):
-        # min_elo=4100, trackmaster_limit=4000 → TM
-        self._make_game(map_obj, season, min_elo=4100, trackmaster_limit=4000)
+    def test_tm_game_requires_average_elo_gte_trackmaster_limit(self, tmp_path, season, map_obj):
+        # average_elo=4100, trackmaster_limit=4000 → TM
+        self._make_game(map_obj, season, average_elo=4100, trackmaster_limit=4000)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season, "MRD_MAP_001")
         assert self._count(data, "tm") == 1
         assert self._count(data, "m3") == 0
 
-    def test_m3_game_has_min_elo_below_trackmaster_limit(self, tmp_path, season, map_obj):
-        # min_elo=3700, trackmaster_limit=4000 → M3 (3700 < 4000)
-        self._make_game(map_obj, season, min_elo=3700, trackmaster_limit=4000)
+    def test_m3_game_has_average_elo_below_trackmaster_limit(self, tmp_path, season, map_obj):
+        # average_elo=3700, trackmaster_limit=4000 → M3 (3700 < 4000)
+        self._make_game(map_obj, season, average_elo=3700, trackmaster_limit=4000)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season, "MRD_MAP_001")
         assert self._count(data, "m3") == 1
         assert self._count(data, "tm") == 0
 
     def test_m3_boundary_exactly_at_trackmaster_limit(self, tmp_path, season, map_obj):
-        # min_elo == trackmaster_limit → TM (>= condition is inclusive)
-        self._make_game(map_obj, season, min_elo=4000, trackmaster_limit=4000)
+        # average_elo == trackmaster_limit → TM (>= condition is inclusive)
+        self._make_game(map_obj, season, average_elo=4000, trackmaster_limit=4000)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season, "MRD_MAP_001")
         assert self._count(data, "tm") == 1
         assert self._count(data, "m3") == 0
 
     def test_multiple_games_on_same_map_aggregated(self, tmp_path, season, map_obj):
-        self._make_game(map_obj, season, min_elo=1000)  # s1
-        self._make_game(map_obj, season, min_elo=1000)  # s1 again
-        self._make_game(map_obj, season, min_elo=2000)  # g1
+        self._make_game(map_obj, season, average_elo=1150)  # s1
+        self._make_game(map_obj, season, average_elo=1150)  # s1 again
+        self._make_game(map_obj, season, average_elo=2150)  # g1
         self._call(tmp_path, season)
         data = self._read(tmp_path, season, "MRD_MAP_001")
         assert self._count(data, "s1") == 2
@@ -3014,8 +3016,9 @@ class TestGetMapsRankDistribution:
     def test_games_outside_season_excluded(self, tmp_path, season, map_obj):
         Game.create(
             map=map_obj,
-            min_elo=1000,
-            max_elo=1300,
+            average_elo=1000,
+            min_elo=850,
+            max_elo=1150,
             is_finished=True,
             time=season.end_time + timedelta(days=5),  # after season
         )
@@ -3024,7 +3027,7 @@ class TestGetMapsRankDistribution:
         assert not path.exists()
 
     def test_result_contains_map_uid_and_name(self, tmp_path, season, map_obj):
-        self._make_game(map_obj, season, min_elo=1000)
+        self._make_game(map_obj, season, average_elo=1000)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season, "MRD_MAP_001")
         assert data["map_uid"] == "MRD_MAP_001"
@@ -3032,8 +3035,8 @@ class TestGetMapsRankDistribution:
 
     def test_separate_files_for_separate_maps(self, tmp_path, season, map_obj):
         map2 = Map.create(uid="MRD_MAP_002", name="Map 2")
-        self._make_game(map_obj, season, min_elo=1000)
-        self._make_game(map2, season, min_elo=2000)
+        self._make_game(map_obj, season, average_elo=1150)
+        self._make_game(map2, season, average_elo=2150)
         self._call(tmp_path, season)
         d1 = self._read(tmp_path, season, "MRD_MAP_001")
         d2 = self._read(tmp_path, season, "MRD_MAP_002")
@@ -3055,11 +3058,12 @@ class TestGetMapsRankDistributionExhaustive:
     def map_obj(self):
         return Map.create(uid="MRDE_MAP_001", name="Exhaustive Map")
 
-    def _game(self, map_obj, season, min_elo, trackmaster_limit=999999):
+    def _game(self, map_obj, season, average_elo, trackmaster_limit=999999):
         return Game.create(
             map=map_obj,
-            min_elo=min_elo,
-            max_elo=min_elo + 50,
+            average_elo=average_elo,
+            min_elo=average_elo - 25,
+            max_elo=average_elo + 25,
             trackmaster_limit=trackmaster_limit,
             is_finished=True,
             time=season.start_time + timedelta(days=1),
@@ -3081,7 +3085,7 @@ class TestGetMapsRankDistributionExhaustive:
     # ── each rank individually ────────────────────────────────────────────────
 
     @pytest.mark.parametrize(
-        "min_elo,expected_key",
+        "average_elo,expected_key",
         [
             (0, "b1"),
             (150, "b1"),
@@ -3109,8 +3113,8 @@ class TestGetMapsRankDistributionExhaustive:
             (3800, "m3"),
         ],
     )
-    def test_each_rank_assigned_correctly(self, tmp_path, season, map_obj, min_elo, expected_key):
-        self._game(map_obj, season, min_elo=min_elo)
+    def test_each_rank_assigned_correctly(self, tmp_path, season, map_obj, average_elo, expected_key):
+        self._game(map_obj, season, average_elo=average_elo)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season)
         counts = self._all_counts(data)
@@ -3118,23 +3122,23 @@ class TestGetMapsRankDistributionExhaustive:
         # every other rank must be 0
         assert sum(v for k, v in counts.items() if k != expected_key) == 0
 
-    def test_tm_when_min_elo_equals_trackmaster_limit(self, tmp_path, season, map_obj):
-        self._game(map_obj, season, min_elo=4000, trackmaster_limit=4000)
+    def test_tm_when_average_elo_equals_trackmaster_limit(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, average_elo=4000, trackmaster_limit=4000)
         self._call(tmp_path, season)
         counts = self._all_counts(self._read(tmp_path, season))
         assert counts["tm"] == 1
         assert sum(v for k, v in counts.items() if k != "tm") == 0
 
-    def test_tm_when_min_elo_above_trackmaster_limit(self, tmp_path, season, map_obj):
-        self._game(map_obj, season, min_elo=4200, trackmaster_limit=4000)
+    def test_tm_when_average_elo_above_trackmaster_limit(self, tmp_path, season, map_obj):
+        self._game(map_obj, season, average_elo=4200, trackmaster_limit=4000)
         self._call(tmp_path, season)
         counts = self._all_counts(self._read(tmp_path, season))
         assert counts["tm"] == 1
         assert sum(v for k, v in counts.items() if k != "tm") == 0
 
     def test_m3_just_below_trackmaster_limit(self, tmp_path, season, map_obj):
-        # min_elo=3999, trackmaster_limit=4000 → M3 (3999 < 4000)
-        self._game(map_obj, season, min_elo=3999, trackmaster_limit=4000)
+        # average_elo=3999, trackmaster_limit=4000 → M3 (3999 < 4000)
+        self._game(map_obj, season, average_elo=3999, trackmaster_limit=4000)
         self._call(tmp_path, season)
         counts = self._all_counts(self._read(tmp_path, season))
         assert counts["m3"] == 1
@@ -3143,7 +3147,7 @@ class TestGetMapsRankDistributionExhaustive:
     # ── exact rank lower boundaries ───────────────────────────────────────────
 
     @pytest.mark.parametrize(
-        "min_elo,key",
+        "average_elo,key",
         [
             (300, "b2"),
             (600, "b3"),
@@ -3158,13 +3162,13 @@ class TestGetMapsRankDistributionExhaustive:
             (3600, "m3"),
         ],
     )
-    def test_lower_boundary_belongs_to_rank(self, tmp_path, season, map_obj, min_elo, key):
-        self._game(map_obj, season, min_elo=min_elo)
+    def test_lower_boundary_belongs_to_rank(self, tmp_path, season, map_obj, average_elo, key):
+        self._game(map_obj, season, average_elo=average_elo)
         self._call(tmp_path, season)
         assert self._count(self._read(tmp_path, season), key) == 1
 
     @pytest.mark.parametrize(
-        "min_elo,key",
+        "average_elo,key",
         [
             (299, "b1"),
             (599, "b2"),
@@ -3179,8 +3183,8 @@ class TestGetMapsRankDistributionExhaustive:
             (3599, "m2"),
         ],
     )
-    def test_one_below_boundary_belongs_to_lower_rank(self, tmp_path, season, map_obj, min_elo, key):
-        self._game(map_obj, season, min_elo=min_elo)
+    def test_one_below_boundary_belongs_to_lower_rank(self, tmp_path, season, map_obj, average_elo, key):
+        self._game(map_obj, season, average_elo=average_elo)
         self._call(tmp_path, season)
         assert self._count(self._read(tmp_path, season), key) == 1
 
@@ -3188,18 +3192,19 @@ class TestGetMapsRankDistributionExhaustive:
 
     def test_each_game_counted_exactly_once(self, tmp_path, season, map_obj):
         # Three games at three different ranks
-        self._game(map_obj, season, min_elo=500)  # b3
-        self._game(map_obj, season, min_elo=1500)  # s2
-        self._game(map_obj, season, min_elo=3000)  # m1
+        self._game(map_obj, season, average_elo=700)  # b3
+        self._game(map_obj, season, average_elo=1450)  # s2
+        self._game(map_obj, season, average_elo=3150)  # m1
         self._call(tmp_path, season)
         counts = self._all_counts(self._read(tmp_path, season))
         assert sum(counts.values()) == 3  # exactly 3 total, no double-counting
 
     # ── exclusions ────────────────────────────────────────────────────────────
 
-    def test_game_with_min_elo_minus_one_excluded(self, tmp_path, season, map_obj):
+    def test_game_with_average_elo_minus_one_excluded(self, tmp_path, season, map_obj):
         Game.create(
             map=map_obj,
+            average_elo=-1,
             min_elo=-1,
             max_elo=-1,
             is_finished=True,
@@ -3211,8 +3216,9 @@ class TestGetMapsRankDistributionExhaustive:
     def test_game_before_season_start_excluded(self, tmp_path, season, map_obj):
         Game.create(
             map=map_obj,
-            min_elo=1000,
-            max_elo=1300,
+            average_elo=1000,
+            min_elo=850,
+            max_elo=1150,
             is_finished=True,
             time=season.start_time - timedelta(days=1),
         )
@@ -3222,8 +3228,9 @@ class TestGetMapsRankDistributionExhaustive:
     def test_game_after_season_end_excluded(self, tmp_path, season, map_obj):
         Game.create(
             map=map_obj,
-            min_elo=1000,
-            max_elo=1300,
+            average_elo=1000,
+            min_elo=850,
+            max_elo=1150,
             is_finished=True,
             time=season.end_time + timedelta(days=1),
         )
@@ -3233,8 +3240,9 @@ class TestGetMapsRankDistributionExhaustive:
     def test_unfinished_game_excluded(self, tmp_path, season, map_obj):
         Game.create(
             map=map_obj,
-            min_elo=1000,
-            max_elo=1300,
+            average_elo=1000,
+            min_elo=850,
+            max_elo=1150,
             is_finished=False,
             time=season.start_time + timedelta(days=1),
         )
@@ -3244,21 +3252,21 @@ class TestGetMapsRankDistributionExhaustive:
     # ── results structure ─────────────────────────────────────────────────────
 
     def test_results_contain_all_13_ranks(self, tmp_path, season, map_obj):
-        self._game(map_obj, season, min_elo=1000)
+        self._game(map_obj, season, average_elo=1150)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season)
         keys = {r["rank"] for r in data["results"]}
         assert keys == {r["key"] for r in RANKS}
 
     def test_results_contain_rank_name(self, tmp_path, season, map_obj):
-        self._game(map_obj, season, min_elo=1000)
+        self._game(map_obj, season, average_elo=1150)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season)
         row = next(r for r in data["results"] if r["rank"] == "s1")
         assert row["name"] == "Silver I"
 
     def test_last_updated_field_present(self, tmp_path, season, map_obj):
-        self._game(map_obj, season, min_elo=1000)
+        self._game(map_obj, season, average_elo=1150)
         self._call(tmp_path, season)
         data = self._read(tmp_path, season)
         assert "last_updated" in data
