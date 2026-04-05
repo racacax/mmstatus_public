@@ -573,6 +573,36 @@ class APIViews(RouteDescriber):
 
     @staticmethod
     @route(
+        name="active_matches_per_rank",
+        summary="Active matches per rank",
+        description="Returns the number of currently active (in-progress) matches per rank. "
+        "A match may be counted in multiple ranks if its elo range spans several ranks. "
+        "A match counts as Trackmaster only if max_elo >= 4000 AND trackmaster_limit <= max_elo; "
+        "otherwise it is counted as Master III.",
+    )
+    def get_active_matches_per_rank():
+        cutoff = datetime.now() - timedelta(minutes=30)
+        base = (Game.is_finished == False) & (Game.min_elo != -1) & (Game.max_elo != -1) & (Game.time >= cutoff)
+        results = []
+        for i, rank in enumerate(RANKS):
+            if i == 0:
+                # Trackmaster: game reaches TM elo AND the TM threshold is within the match range
+                condition = base & (Game.max_elo >= 4000) & (Game.trackmaster_limit <= Game.max_elo)
+            else:
+                rank_max_elo = RANKS[i - 1]["min_elo"] - 1
+                normal = (Game.min_elo <= rank_max_elo) & (Game.max_elo >= rank["min_elo"])
+                if i == 1:
+                    # Master III: also absorb games that reach TM elo but fail the TM trackmaster_limit check
+                    failed_tm = (Game.max_elo >= 4000) & (Game.trackmaster_limit > Game.max_elo)
+                    condition = base & (normal | failed_tm)
+                else:
+                    condition = base & normal
+            count = Game.select(fn.COUNT(Game.id)).where(condition).scalar() or 0
+            results.append({"rank": rank["key"], "name": rank["name"], "count": count})
+        return 200, {"results": results}
+
+    @staticmethod
+    @route(
         name="seasons",
         summary="Seasons",
         description="Returns list of all matchmaking seasons since Spring 2024",

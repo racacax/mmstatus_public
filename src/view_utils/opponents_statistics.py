@@ -48,7 +48,7 @@ def get_params(group_by: str, Opponent):
     if group_by == "country":
         return [Zone.name, Zone.file_name, Zone.country_alpha3]
     elif group_by == "uuid":
-        return [Opponent.name]
+        return [Opponent.name, Opponent.club_tag]
     else:
         return []
 

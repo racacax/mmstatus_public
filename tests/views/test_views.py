@@ -4,6 +4,10 @@ from uuid import UUID
 from models import Player, PlayerSeason, Season, Zone
 from src.views import APIViews
 
+
+from src.utils import RANKS as _RANKS
+from src.views import APIViews as _APIViews
+
 # ── helpers ───────────────────────────────────────────────────────────────────
 
 
@@ -257,3 +261,131 @@ class TestGetGlobalLeaderboard:
         make_player_season(p, s, points=3750, rank=1)
         _, data = call(season=s.id)
         assert data["results"][0]["points"] == 3750
+
+
+# ── get_active_matches_per_rank ───────────────────────────────────────────────
+
+
+def _make_map():
+    import uuid
+    from models import Map
+
+    return Map.create(uid=str(uuid.uuid4())[:20], name="M")
+
+
+def _make_active_game(map_obj, min_elo, max_elo, trackmaster_limit=999999, is_finished=False):
+    from models import Game
+    from datetime import datetime
+
+    return Game.create(
+        map=map_obj,
+        min_elo=min_elo,
+        max_elo=max_elo,
+        trackmaster_limit=trackmaster_limit,
+        is_finished=is_finished,
+        time=datetime.now(),
+    )
+
+
+def _call_active():
+    return _APIViews.get_active_matches_per_rank()
+
+
+def _by_key(results, key):
+    return next(r for r in results if r["rank"] == key)
+
+
+class TestGetActiveMatchesPerRank:
+
+    def test_returns_200(self):
+        status, _ = _call_active()
+        assert status == 200
+
+    def test_response_contains_all_13_ranks(self):
+        _, data = _call_active()
+        keys = {r["rank"] for r in data["results"]}
+        expected = {r["key"] for r in _RANKS}
+        assert keys == expected
+
+    def test_all_counts_zero_when_no_active_games(self):
+        _, data = _call_active()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_finished_game_not_counted(self):
+        m = _make_map()
+        _make_active_game(m, 3000, 3299, is_finished=True)
+        _, data = _call_active()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_game_without_elo_data_not_counted(self):
+        m = _make_map()
+        # min_elo and max_elo stay at default -1
+        from models import Game
+        from datetime import datetime
+
+        Game.create(map=m, is_finished=False, time=datetime.now())
+        _, data = _call_active()
+        assert all(r["count"] == 0 for r in data["results"])
+
+    def test_game_entirely_in_m1_range_counted_only_in_m1(self):
+        m = _make_map()
+        _make_active_game(m, min_elo=3000, max_elo=3299)
+        _, data = _call_active()
+        assert _by_key(data["results"], "m1")["count"] == 1
+        assert _by_key(data["results"], "m2")["count"] == 0
+        assert _by_key(data["results"], "g3")["count"] == 0
+
+    def test_game_spanning_two_ranks_counted_in_both(self):
+        # Silver II (1300-1599) to Silver III (1600-1999)
+        m = _make_map()
+        _make_active_game(m, min_elo=1300, max_elo=1700)
+        _, data = _call_active()
+        assert _by_key(data["results"], "s2")["count"] == 1
+        assert _by_key(data["results"], "s3")["count"] == 1
+        assert _by_key(data["results"], "s1")["count"] == 0
+        assert _by_key(data["results"], "g1")["count"] == 0
+
+    def test_tm_game_with_valid_trackmaster_limit_counted_as_tm(self):
+        m = _make_map()
+        # max_elo=4200, trackmaster_limit=4000 (<=max_elo) → TM
+        _make_active_game(m, min_elo=3600, max_elo=4200, trackmaster_limit=4000)
+        _, data = _call_active()
+        assert _by_key(data["results"], "tm")["count"] == 1
+
+    def test_tm_range_with_invalid_trackmaster_limit_counted_as_m3_not_tm(self):
+        m = _make_map()
+        # max_elo=4200 but trackmaster_limit=4500 (>max_elo) → not TM, counts as M3
+        _make_active_game(m, min_elo=3600, max_elo=4200, trackmaster_limit=4500)
+        _, data = _call_active()
+        assert _by_key(data["results"], "tm")["count"] == 0
+        assert _by_key(data["results"], "m3")["count"] == 1
+
+    def test_m3_game_below_tm_threshold_not_affected_by_tm_logic(self):
+        m = _make_map()
+        # max_elo=3999 → clearly M3, never reaches TM territory
+        _make_active_game(m, min_elo=3600, max_elo=3999)
+        _, data = _call_active()
+        assert _by_key(data["results"], "m3")["count"] == 1
+        assert _by_key(data["results"], "tm")["count"] == 0
+
+    def test_multiple_active_games_counted_independently(self):
+        m = _make_map()
+        _make_active_game(m, min_elo=1000, max_elo=1299)  # s1
+        _make_active_game(m, min_elo=1000, max_elo=1299)  # s1 again
+        _, data = _call_active()
+        assert _by_key(data["results"], "s1")["count"] == 2
+
+    def test_old_active_game_excluded_by_time_cutoff(self):
+        from models import Game
+
+        m = _make_map()
+        # Game started 2 hours ago — older than 30-minute cutoff, must not appear
+        Game.create(
+            map=m,
+            min_elo=1000,
+            max_elo=1299,
+            is_finished=False,
+            time=__import__("datetime").datetime.now() - __import__("datetime").timedelta(hours=2),
+        )
+        _, data = _call_active()
+        assert all(r["count"] == 0 for r in data["results"])

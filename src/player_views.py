@@ -537,7 +537,7 @@ class PlayerAPIViews(RouteDescriber):
             PlayerSeason.select(
                 Player.uuid,
                 Player.name,
-                Player.club_tag,
+                PlayerSeason.club_tag.alias("club_tag"),
                 PlayerSeason.rank,
                 PlayerSeason.points,
                 total_played.alias("total_played"),

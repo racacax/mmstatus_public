@@ -1651,3 +1651,84 @@ class TestGetMatches:
         _, data = self._call()
         finished_flags = {r["is_finished"] for r in data["results"]}
         assert finished_flags == {True, False}
+
+
+# ── get_statistics: club_tag source ──────────────────────────────────────────
+
+
+class TestGetStatisticsClubTag:
+    """club_tag in the season (non-time-range) path must come from PlayerSeason, not Player."""
+
+    def _call(self, season_id=-1):
+        return PlayerAPIViews.get_statistics(player=PLAYER_UUID, min_date=0, max_date=None, season=season_id)
+
+    def test_club_tag_from_player_season_not_player(self, map_obj):
+        now = datetime.now()
+        season = Season.create(name="CT_S", start_time=now - timedelta(days=30), end_time=now + timedelta(days=30))
+        player = Player.create(uuid=PLAYER_UUID, name="P", club_tag="PLAYER_TAG")
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000, club_tag="SEASON_TAG")
+        make_player_game(player, make_game(map_obj, is_finished=True))
+
+        _, data = self._call(season_id=season.id)
+        assert data["club_tag"] == "SEASON_TAG"
+        assert data["club_tag"] != "PLAYER_TAG"
+
+    def test_club_tag_is_none_when_player_season_has_no_tag(self, map_obj):
+        now = datetime.now()
+        season = Season.create(name="CT_S2", start_time=now - timedelta(days=30), end_time=now + timedelta(days=30))
+        player = Player.create(uuid=PLAYER_UUID, name="P", club_tag="PLAYER_TAG")
+        PlayerSeason.create(player=player, season=season, rank=1, points=1000, club_tag=None)
+        make_player_game(player, make_game(map_obj, is_finished=True))
+
+        _, data = self._call(season_id=season.id)
+        assert data["club_tag"] is None
+
+
+# ── get_opponents_statistics: club_tag ────────────────────────────────────────
+
+
+class TestGetOpponentsStatisticsClubTag:
+    """club_tag must be present per opponent when group_by=uuid, absent otherwise."""
+
+    def _call(self, **kwargs):
+        defaults = dict(
+            player=PLAYER_UUID,
+            order_by="played",
+            order="desc",
+            page=1,
+            min_date=0,
+            max_date=None,
+            group_by="uuid",
+        )
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_opponents_statistics(**defaults)
+
+    def _row(self, results):
+        return next(r for r in results if str(r["uuid"]) == str(OPPONENT_UUID))
+
+    def test_club_tag_returned_for_uuid_group_by(self, player, map_obj):
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", club_tag="OPP_TAG")
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call(group_by="uuid")
+        assert self._row(data["results"])["club_tag"] == "OPP_TAG"
+
+    def test_club_tag_is_none_when_opponent_has_no_tag(self, player, map_obj):
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", club_tag=None)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call(group_by="uuid")
+        assert self._row(data["results"])["club_tag"] is None
+
+    def test_club_tag_not_present_for_country_group_by(self, player, map_obj):
+        from models import Zone
+
+        z = Zone.create(
+            uuid="aaaaaaaa-0000-0000-0000-000000000200", name="France", country_alpha3="FRA", file_name="FRA"
+        )
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", club_tag="OPP_TAG", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call(group_by="country")
+        assert len(data["results"]) == 1
+        assert "club_tag" not in data["results"][0]
