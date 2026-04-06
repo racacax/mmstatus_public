@@ -469,7 +469,9 @@ class APIViews(RouteDescriber):
         "Each match is counted once, based on min_elo.",
     )
     def get_maps_rank_distribution(
-        map_uid: Option(str, description="UID of the map") = "SummerGames2024_Race_A",
+        map_uid: Option(
+            str, description="UID of the map", formatted_default="<Winter 2026 - 10  (OyfZGwOGX7Tvz6KMDZcwpUJyfX1)>"
+        ) = "OyfZGwOGX7Tvz6KMDZcwpUJyfX1",
         season: Option(
             int,
             description="ID representing a season (provided by the seasons endpoint)",

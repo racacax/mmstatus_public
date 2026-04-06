@@ -12,6 +12,7 @@ import pytest
 
 from models import Game, Map, Player, PlayerGame, PlayerSeason, Season
 from src.player_views import PlayerAPIViews, _compute_streaks
+from src.utils import RANKS
 
 PLAYER_UUID = UUID("aaaaaaaa-0000-0000-0000-000000000001")
 OPPONENT_UUID = UUID("bbbbbbbb-0000-0000-0000-000000000002")
@@ -1732,3 +1733,207 @@ class TestGetOpponentsStatisticsClubTag:
         _, data = self._call(group_by="country")
         assert len(data["results"]) == 1
         assert "club_tag" not in data["results"][0]
+
+
+# ── get_statistics_per_rank ───────────────────────────────────────────────────
+
+TM_RANK = next(r for r in RANKS if r["key"] == "tm")
+M3_RANK = next(r for r in RANKS if r["key"] == "m3")
+M2_RANK = next(r for r in RANKS if r["key"] == "m2")
+TM_MIN_ELO = TM_RANK["min_elo"]  # 4000
+M3_MIN_ELO = M3_RANK["min_elo"]  # 3600
+M2_MIN_ELO = M2_RANK["min_elo"]  # 3300
+TRACKMASTER_LIMIT = 4500  # arbitrary dynamic limit used in test games
+
+
+def _make_game(map_obj, trackmaster_limit=TRACKMASTER_LIMIT, is_finished=True, time=None):
+    return Game.create(
+        map=map_obj,
+        is_finished=is_finished,
+        time=time or datetime.now(),
+        trackmaster_limit=trackmaster_limit,
+    )
+
+
+def _make_pg(player, game, points_after=None, rank_after=None, is_win=False, is_mvp=False):
+    return PlayerGame.create(
+        player=player,
+        game=game,
+        points_after_match=points_after,
+        rank_after_match=rank_after,
+        is_win=is_win,
+        is_mvp=is_mvp,
+    )
+
+
+class TestGetStatisticsPerRank:
+
+    def _call(self, **kwargs):
+        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=None)
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_statistics_per_rank(**defaults)
+
+    def _rank(self, results, key):
+        return next(r for r in results if r["rank"] == key)
+
+    # ── shape / contract ──────────────────────────────────────────────────────
+
+    def test_returns_200(self, player, map_obj):
+        _, data = self._call()
+        assert _ == 200
+
+    def test_result_has_all_ranks(self, player, map_obj):
+        _, data = self._call()
+        keys = {r["rank"] for r in data["results"]}
+        assert keys == {r["key"] for r in RANKS}
+
+    def test_result_row_has_expected_keys(self, player, map_obj):
+        _, data = self._call()
+        row = data["results"][0]
+        assert set(row.keys()) == {"rank", "rank_name", "played", "wins", "mvps"}
+
+    def test_all_zeros_when_no_games(self, player, map_obj):
+        _, data = self._call()
+        for row in data["results"]:
+            assert row["played"] == 0
+            assert row["wins"] == 0
+            assert row["mvps"] == 0
+
+    def test_player_in_response(self, player, map_obj):
+        _, data = self._call()
+        assert data["player"] == PLAYER_UUID
+
+    # ── null points_after_match excluded ─────────────────────────────────────
+
+    def test_game_without_points_after_match_excluded(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=None, rank_after=50, is_win=True)
+        _, data = self._call()
+        total = sum(r["played"] for r in data["results"])
+        assert total == 0
+
+    # ── unfinished games excluded ─────────────────────────────────────────────
+
+    def test_unfinished_game_excluded(self, player, map_obj):
+        g = _make_game(map_obj, is_finished=False)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["played"] == 0
+
+    # ── basic tier routing ────────────────────────────────────────────────────
+
+    def test_m2_game_counted_in_m2(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["played"] == 1
+
+    def test_m2_game_not_counted_in_other_tiers(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50)
+        _, data = self._call()
+        for row in data["results"]:
+            if row["rank"] != "m2":
+                assert row["played"] == 0
+
+    # ── M3 / TM separation via trackmaster_limit ─────────────────────────────
+
+    def test_m3_below_trackmaster_limit_counted_as_m3(self, player, map_obj):
+        # points >= 3600 but < trackmaster_limit, rank > 10 → M3
+        g = _make_game(map_obj, trackmaster_limit=TRACKMASTER_LIMIT)
+        _make_pg(player, g, points_after=M3_MIN_ELO + 50, rank_after=20)
+        _, data = self._call()
+        assert self._rank(data["results"], "m3")["played"] == 1
+        assert self._rank(data["results"], "tm")["played"] == 0
+
+    def test_tm_above_trackmaster_limit_with_top10_counted_as_tm(self, player, map_obj):
+        # points >= trackmaster_limit AND rank <= 10 → TM
+        g = _make_game(map_obj, trackmaster_limit=TRACKMASTER_LIMIT)
+        _make_pg(player, g, points_after=TRACKMASTER_LIMIT + 100, rank_after=5)
+        _, data = self._call()
+        assert self._rank(data["results"], "tm")["played"] == 1
+        assert self._rank(data["results"], "m3")["played"] == 0
+
+    def test_above_trackmaster_limit_but_rank_above_10_counted_as_m3(self, player, map_obj):
+        # points >= trackmaster_limit but rank > 10 → M3 (not TM)
+        g = _make_game(map_obj, trackmaster_limit=TRACKMASTER_LIMIT)
+        _make_pg(player, g, points_after=TRACKMASTER_LIMIT + 100, rank_after=11)
+        _, data = self._call()
+        assert self._rank(data["results"], "m3")["played"] == 1
+        assert self._rank(data["results"], "tm")["played"] == 0
+
+    def test_below_trackmaster_limit_but_rank_top10_counted_as_m3(self, player, map_obj):
+        # points in [3600, trackmaster_limit) with rank <= 10 → M3 (not TM)
+        g = _make_game(map_obj, trackmaster_limit=TRACKMASTER_LIMIT)
+        _make_pg(player, g, points_after=TRACKMASTER_LIMIT - 100, rank_after=3)
+        _, data = self._call()
+        assert self._rank(data["results"], "m3")["played"] == 1
+        assert self._rank(data["results"], "tm")["played"] == 0
+
+    # ── wins / mvps ───────────────────────────────────────────────────────────
+
+    def test_win_counted_in_correct_tier(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50, is_win=True)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["wins"] == 1
+
+    def test_loss_not_counted_as_win(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50, is_win=False)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["wins"] == 0
+
+    def test_mvp_counted_in_correct_tier(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50, is_mvp=True)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["mvps"] == 1
+
+    def test_non_mvp_not_counted(self, player, map_obj):
+        g = _make_game(map_obj)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50, is_mvp=False)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["mvps"] == 0
+
+    # ── multiple games across tiers accumulate independently ─────────────────
+
+    def test_multiple_tiers_counted_independently(self, player, map_obj):
+        g1 = _make_game(map_obj)
+        g2 = _make_game(map_obj)
+        g3 = _make_game(map_obj)
+        _make_pg(player, g1, points_after=M2_MIN_ELO, rank_after=50, is_win=True)
+        _make_pg(player, g2, points_after=M2_MIN_ELO, rank_after=50, is_win=False)
+        _make_pg(player, g3, points_after=M3_MIN_ELO + 50, rank_after=20, is_win=True)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["played"] == 2
+        assert self._rank(data["results"], "m2")["wins"] == 1
+        assert self._rank(data["results"], "m3")["played"] == 1
+        assert self._rank(data["results"], "m3")["wins"] == 1
+
+    # ── date filtering ────────────────────────────────────────────────────────
+
+    def test_game_before_min_date_excluded(self, player, map_obj):
+        old = datetime(2020, 1, 1)
+        g = _make_game(map_obj, time=old)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50)
+        min_ts = int(datetime(2021, 1, 1).timestamp())
+        _, data = self._call(min_date=min_ts)
+        assert self._rank(data["results"], "m2")["played"] == 0
+
+    def test_game_after_max_date_excluded(self, player, map_obj):
+        future = datetime.now() + timedelta(days=365)
+        g = _make_game(map_obj, time=future)
+        _make_pg(player, g, points_after=M2_MIN_ELO, rank_after=50)
+        max_ts = int(datetime.now().timestamp())
+        _, data = self._call(max_date=max_ts)
+        assert self._rank(data["results"], "m2")["played"] == 0
+
+    # ── other player's games not counted ─────────────────────────────────────
+
+    def test_other_player_games_not_counted(self, player, map_obj):
+        other = Player.create(uuid=UUID("cccccccc-0000-0000-0000-000000000099"), name="Other")
+        g = _make_game(map_obj)
+        _make_pg(other, g, points_after=M2_MIN_ELO, rank_after=50, is_win=True)
+        _, data = self._call()
+        assert self._rank(data["results"], "m2")["played"] == 0

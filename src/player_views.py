@@ -4,7 +4,7 @@ from uuid import UUID
 from peewee import Case, fn, JOIN
 
 from models import Player, PlayerGame, Game, Map, PlayerSeason, Season
-from src.utils import Option, route, RouteDescriber
+from src.utils import Option, route, RouteDescriber, RANKS
 from src.view_utils.opponents_statistics import get_query
 
 
@@ -579,6 +579,85 @@ class PlayerAPIViews(RouteDescriber):
             }
         else:
             return 404, {"message": "Current player either doesn't exist or didn't play this season"}
+
+    @staticmethod
+    @route(
+        name="statistics_per_rank",
+        summary="Statistics per rank tier",
+        description=(
+            "Returns total matches, wins and MVPs grouped by the rank tier the player was in "
+            "at the time of each game, determined by points_after_match and rank_after_match. "
+            "Only games where points_after_match is known are counted. "
+            "Trackmaster requires points >= trackmaster_limit AND rank <= 10; "
+            "Master III covers points >= 3600 that are not Trackmaster."
+        ),
+    )
+    def get_statistics_per_rank(
+        player: Option(UUID, description="Unique UUID identifying a player") = UUID(
+            "84078894-bae1-4399-b869-7b42a5240f02"
+        ),
+        min_date: Option(
+            int,
+            description="Unix timestamp representing the start date of filtered data",
+        ) = 0,
+        max_date: Option(
+            int,
+            description="Unix timestamp representing the end date of filtered data",
+            formatted_default="<current timestamp>",
+        ) = None,
+    ):
+        min_date = datetime.fromtimestamp(min_date)
+        max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
+
+        rank_cases = []
+        for i, rank in enumerate(RANKS):
+            if rank["key"] == "tm":
+                cond = (PlayerGame.points_after_match >= Game.trackmaster_limit) & (
+                    PlayerGame.rank_after_match <= rank["min_rank"]
+                )
+            elif rank["key"] == "m3":
+                cond = (PlayerGame.points_after_match >= rank["min_elo"]) & (
+                    (PlayerGame.rank_after_match > 10) | (PlayerGame.points_after_match < Game.trackmaster_limit)
+                )
+            else:
+                cond = (PlayerGame.points_after_match >= rank["min_elo"]) & (
+                    PlayerGame.points_after_match < RANKS[i - 1]["min_elo"]
+                )
+            rank_cases.append((rank, cond))
+
+        select_exprs = []
+        for rank, cond in rank_cases:
+            key = rank["key"]
+            select_exprs += [
+                fn.SUM(Case(None, [(cond, 1)], 0)).alias(f"{key}_played"),
+                fn.SUM(Case(None, [(cond & (PlayerGame.is_win == True), 1)], 0)).alias(f"{key}_wins"),
+                fn.SUM(Case(None, [(cond & (PlayerGame.is_mvp == True), 1)], 0)).alias(f"{key}_mvps"),
+            ]
+
+        row = (
+            PlayerGame.select(*select_exprs)
+            .join(Game, JOIN.LEFT_OUTER)
+            .where(
+                PlayerGame.player_id == player,
+                PlayerGame.points_after_match.is_null(False),
+                Game.is_finished == True,
+                Game.time >= min_date,
+                Game.time <= max_date,
+            )
+            .dicts()
+        )[0]
+
+        results = [
+            {
+                "rank": rank["key"],
+                "rank_name": rank["name"],
+                "played": int(row[f"{rank['key']}_played"] or 0),
+                "wins": int(row[f"{rank['key']}_wins"] or 0),
+                "mvps": int(row[f"{rank['key']}_mvps"] or 0),
+            }
+            for rank, _ in rank_cases
+        ]
+        return 200, {"results": results, "player": player}
 
     @staticmethod
     @route(

@@ -16,6 +16,22 @@ from src.threads.abstract_thread import AbstractThread
 logger = create_logger("update_big_queries")
 
 
+def get_game_tier_condition(rank, game_field=None):
+    """Return the Game elo filter for a given rank tier.
+
+    TM and Master III use trackmaster_limit as the dynamic boundary between
+    them, applied to whatever elo field is relevant for the query (min_elo
+    by default, max_elo for country-activity queries).  All other tiers use
+    a plain >= threshold on that same field.
+    """
+    field = game_field if game_field is not None else Game.min_elo
+    if rank["key"] == "tm":
+        return field >= Game.trackmaster_limit
+    if rank["key"] == "m3":
+        return (field >= rank["min_elo"]) & (field < Game.trackmaster_limit)
+    return field >= rank["min_elo"]
+
+
 def get_countries_leaderboard(season_id):
     total_players = 1000
     points_repartition = distribute_points(max_points=10000, num_people=total_players)
@@ -208,7 +224,7 @@ def get_players_matches_funcs():
     return players_matches
 
 
-def get_activity_per_hour(min_elo, min_date, max_date):
+def get_activity_per_hour(rank, min_date, max_date):
     def get_condition(min_hour):
         return fn.SUM(
             Case(
@@ -228,7 +244,7 @@ def get_activity_per_hour(min_elo, min_date, max_date):
         Game.select(*conditions)
         .where(
             Game.average_elo > -1,
-            Game.min_elo >= min_elo,
+            get_game_tier_condition(rank),
             Game.time >= min_date,
             Game.time <= max_date,
         )
@@ -241,7 +257,7 @@ def get_activity_per_hour(min_elo, min_date, max_date):
     )
 
 
-def get_activity_per_day_of_the_week(min_elo, min_date, max_date):
+def get_activity_per_day_of_the_week(rank, min_date, max_date):
     # DAYOFWEEK() returns 1=Sunday … 7=Saturday; subtract 1 for 0-indexed keys
     # COALESCE handles the case where the WHERE clause filters all rows (SUM returns NULL)
     def get_condition(day):
@@ -252,7 +268,7 @@ def get_activity_per_day_of_the_week(min_elo, min_date, max_date):
         Game.select(*conditions)
         .where(
             Game.average_elo > -1,
-            Game.min_elo >= min_elo,
+            get_game_tier_condition(rank),
             Game.time >= min_date,
             Game.time <= max_date,
         )
@@ -264,7 +280,7 @@ def get_activity_per_day_of_the_week(min_elo, min_date, max_date):
     )
 
 
-def get_activity_heatmap(min_elo, min_date, max_date):
+def get_activity_heatmap(rank, min_date, max_date):
     day = (fn.DAYOFWEEK(Game.time) - 1).alias("day")
     hour = fn.HOUR(Game.time).alias("hour")
     count = fn.COUNT(Game.id).alias("count")
@@ -272,7 +288,7 @@ def get_activity_heatmap(min_elo, min_date, max_date):
         Game.select(day, hour, count)
         .where(
             Game.average_elo > -1,
-            Game.min_elo >= min_elo,
+            get_game_tier_condition(rank),
             Game.time >= min_date,
             Game.time <= max_date,
         )
@@ -293,14 +309,14 @@ def get_activity_heatmap_funcs():
     funcs = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_activity_heatmap(min_elo, min_date, max_date)
+                return get_activity_heatmap(r, min_date, max_date)
 
-            my_func.__name__ = "get_activity_heatmap_" + str(min_elo)
+            my_func.__name__ = "get_activity_heatmap_" + str(r["min_elo"])
             return my_func
 
-        funcs.append(parent_func(rank["min_elo"]))
+        funcs.append(parent_func(rank))
     return funcs
 
 
@@ -308,14 +324,14 @@ def get_activity_day_of_the_week_funcs():
     activity_per_day_of_the_week = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_activity_per_day_of_the_week(min_elo, min_date, max_date)
+                return get_activity_per_day_of_the_week(r, min_date, max_date)
 
-            my_func.__name__ = "get_activity_per_day_of_the_week_" + str(min_elo)
+            my_func.__name__ = "get_activity_per_day_of_the_week_" + str(r["min_elo"])
             return my_func
 
-        activity_per_day_of_the_week.append(parent_func(rank["min_elo"]))
+        activity_per_day_of_the_week.append(parent_func(rank))
     return activity_per_day_of_the_week
 
 
@@ -323,18 +339,18 @@ def get_activity_hours_funcs():
     activity_per_hours = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_activity_per_hour(min_elo, min_date, max_date)
+                return get_activity_per_hour(r, min_date, max_date)
 
-            my_func.__name__ = "get_activity_per_hour_" + str(min_elo)
+            my_func.__name__ = "get_activity_per_hour_" + str(r["min_elo"])
             return my_func
 
-        activity_per_hours.append(parent_func(rank["min_elo"]))
+        activity_per_hours.append(parent_func(rank))
     return activity_per_hours
 
 
-def get_activity_per_country(min_elo, min_date, max_date):
+def get_activity_per_country(rank, min_date, max_date):
     games = (
         PlayerGame.select(
             Zone.id,
@@ -350,7 +366,7 @@ def get_activity_per_country(min_elo, min_date, max_date):
         .join(Game)
         .where(
             Game.average_elo > -1,
-            Game.max_elo >= min_elo,
+            get_game_tier_condition(rank, Game.max_elo),
             Game.time >= min_date,
             Game.time <= max_date,
         )
@@ -368,18 +384,18 @@ def get_activity_per_country_funcs():
     activity_per_country = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_activity_per_country(min_elo, min_date, max_date)
+                return get_activity_per_country(r, min_date, max_date)
 
-            my_func.__name__ = "get_activity_per_country_" + str(min_elo)
+            my_func.__name__ = "get_activity_per_country_" + str(r["min_elo"])
             return my_func
 
-        activity_per_country.append(parent_func(rank["min_elo"]))
+        activity_per_country.append(parent_func(rank))
     return activity_per_country
 
 
-def get_activity_hours_countries(min_elo, min_date, max_date):
+def get_activity_hours_countries(rank, min_date, max_date):
     def get_condition(min_hour):
         return fn.SUM(
             Case(
@@ -403,7 +419,7 @@ def get_activity_hours_countries(min_elo, min_date, max_date):
         .join(Game)
         .where(
             Game.average_elo > -1,
-            Game.max_elo >= min_elo,
+            get_game_tier_condition(rank, Game.max_elo),
             Game.time >= min_date,
             Game.time <= max_date,
         )
@@ -421,14 +437,14 @@ def get_activity_hours_countries_funcs():
     activity_per_hours = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_activity_hours_countries(min_elo, min_date, max_date)
+                return get_activity_hours_countries(r, min_date, max_date)
 
-            my_func.__name__ = "get_activity_per_country_and_hour_" + str(min_elo)
+            my_func.__name__ = "get_activity_per_country_and_hour_" + str(r["min_elo"])
             return my_func
 
-        activity_per_hours.append(parent_func(rank["min_elo"]))
+        activity_per_hours.append(parent_func(rank))
     return activity_per_hours
 
 
@@ -460,6 +476,7 @@ def get_activity_players_per_country(min_elo, min_rank, min_date):
 
 
 H2H_ELOS = [3000, 3300, 3600, 4000]
+_H2H_RANKS = {r["min_elo"]: r for r in RANKS if r["min_elo"] in H2H_ELOS}
 
 
 def get_country_h2h_func(path, season, min_elo):
@@ -483,7 +500,7 @@ def get_country_h2h_func(path, season, min_elo):
             .where(
                 (Game.average_elo > -1)
                 & (Game.is_finished == True)
-                & (Game.min_elo >= min_elo)
+                & get_game_tier_condition(_H2H_RANKS[min_elo])
                 & (Game.time >= min_date)
                 & (Game.time <= max_date)
             )
@@ -511,6 +528,12 @@ def get_country_h2h_func(path, season, min_elo):
                     if cb == ca:
                         continue
                     cb_split = cb in teams["winners"] and cb in teams["losers"]
+                    # Skip pairs on the same team (both clearly winners or both clearly losers)
+                    if not ca_split and not cb_split:
+                        ca_won = ca in teams["winners"]
+                        cb_won = cb in teams["winners"]
+                        if ca_won == cb_won:
+                            continue
                     stats = h2h[ca][cb]
                     stats["games"] += 1
                     if ca_split or cb_split:
@@ -620,10 +643,10 @@ def get_maps_rank_distribution_func(path, season):
 
         rank_cases = []
         for i, rank in enumerate(RANKS):
-            if i == 0:  # Trackmaster: average_elo >= trackmaster_limit
+            if rank["key"] == "tm":  # Trackmaster: average_elo >= trackmaster_limit
                 cond = Game.average_elo >= Game.trackmaster_limit
-            elif i == 1:  # Master III: average_elo >= 3600 AND average_elo < trackmaster_limit
-                cond = (Game.average_elo >= 3600) & (Game.average_elo < Game.trackmaster_limit)
+            elif rank["key"] == "m3":  # Master III: average_elo >= rank.min_elo AND average_elo < trackmaster_limit
+                cond = (Game.average_elo >= rank["min_elo"]) & (Game.average_elo < Game.trackmaster_limit)
             else:  # All others: average_elo in [rank.min_elo, next_rank.min_elo)
                 cond = (Game.average_elo >= rank["min_elo"]) & (Game.average_elo < RANKS[i - 1]["min_elo"])
             rank_cases.append((rank, fn.SUM(Case(None, [(cond, 1)], 0))))
@@ -691,21 +714,21 @@ def get_activity_players_per_country_funcs():
 
 def get_rank_distribution_func(season: Season):
     def get_activity_per_rank_distribution(min_date, _):
-        def get_condition(code, min_elo, max_elo, min_rank):
-            if min_rank:
-                condition = Player.rank <= min_rank
-            else:
-                condition = Player.rank > 10
-            condition = (Player.points >= min_elo) & (Player.points < max_elo) & condition
-            return fn.SUM(Case(None, [(condition, 1)], 0)).alias(code)
-
         conditions = []
         for i in range(len(RANKS) - 1, -1, -1):
-            if i != 0:
-                max_elo = RANKS[i - 1]["min_elo"]
+            rank = RANKS[i]
+            if rank["key"] == "tm":
+                # TM: top-10 players with points >= 4000
+                cond = (Player.points >= rank["min_elo"]) & (Player.rank <= rank["min_rank"])
+            elif rank["key"] == "m3":
+                # M3: points >= 3600, excluding TM (rank <= 10 AND points >= 4000)
+                tm_min_elo = RANKS[i - 1]["min_elo"]
+                cond = (Player.points >= rank["min_elo"]) & ((Player.rank > 10) | (Player.points < tm_min_elo))
             else:
-                max_elo = 99999999
-            conditions.append(get_condition(RANKS[i]["key"], RANKS[i]["min_elo"], max_elo, RANKS[i]["min_rank"]))
+                cond = (
+                    (Player.points >= rank["min_elo"]) & (Player.points < RANKS[i - 1]["min_elo"]) & (Player.rank > 10)
+                )
+            conditions.append(fn.SUM(Case(None, [(cond, 1)], 0)).alias(rank["key"]))
         players = (
             Player.select(*conditions)
             .join(Game)
@@ -735,7 +758,7 @@ def get_rank_distribution_func(season: Season):
     return get_activity_per_rank_distribution
 
 
-def get_player_retention(min_elo, min_date, max_date):
+def get_player_retention(rank, min_date, max_date):
     """
     For each complete week-pair (N, N+1) within the season window, compute:
       - total_players : distinct players who played at least once in week N
@@ -757,7 +780,7 @@ def get_player_retention(min_elo, min_date, max_date):
         .join(PlayerGame)
         .where(
             Game.average_elo > -1,
-            Game.min_elo >= min_elo,
+            get_game_tier_condition(rank),
             Game.time >= min_date,
             Game.time <= max_date,
         )
@@ -795,18 +818,18 @@ def get_player_retention_funcs():
     funcs = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_player_retention(min_elo, min_date, max_date)
+                return get_player_retention(r, min_date, max_date)
 
-            my_func.__name__ = "get_player_retention_" + str(min_elo)
+            my_func.__name__ = "get_player_retention_" + str(r["min_elo"])
             return my_func
 
-        funcs.append(parent_func(rank["min_elo"]))
+        funcs.append(parent_func(rank))
     return funcs
 
 
-def get_hot_this_week(min_elo, _min_date, _max_date):
+def get_hot_this_week(min_elo, min_rank, _min_date, _max_date):
     start = datetime.now() - timedelta(days=7)
     wins = fn.SUM(PlayerGame.is_win)
     played = fn.COUNT(PlayerGame.id)
@@ -830,6 +853,7 @@ def get_hot_this_week(min_elo, _min_date, _max_date):
             Game.average_elo > -1,
             Game.time >= start,
             Player.points >= min_elo,
+            *([Player.rank <= min_rank] if min_rank else []),
         )
         .group_by(Player.uuid, Player.points, Zone.country_alpha3, Zone.name, Zone.file_name)
         .order_by(wins.desc())
@@ -863,18 +887,18 @@ def get_hot_this_week_funcs():
         if rank["min_elo"] < 2000:
             continue
 
-        def parent_func(min_elo):
+        def parent_func(min_elo, min_rank):
             def my_func(min_date, max_date):
-                return get_hot_this_week(min_elo, min_date, max_date)
+                return get_hot_this_week(min_elo, min_rank, min_date, max_date)
 
             my_func.__name__ = "get_hot_this_week_" + str(min_elo)
             return my_func
 
-        funcs.append(parent_func(rank["min_elo"]))
+        funcs.append(parent_func(rank["min_elo"], rank["min_rank"]))
     return funcs
 
 
-def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
+def get_hot_this_week_by_points_delta(min_elo, min_rank, _min_date, _max_date):
     start = datetime.now() - timedelta(days=7)
 
     # Per player: game_id of their earliest game in the period that has a non-null elo
@@ -938,7 +962,7 @@ def get_hot_this_week_by_points_delta(min_elo, _min_date, _max_date):
         .join(total_played_subq, on=(Player.uuid == total_played_subq.c.player_id))
         .switch(Player)
         .join(Zone, JOIN.LEFT_OUTER, on=(Zone.id == Player.country_id), attr="country_zone")
-        .where(Player.points >= min_elo)
+        .where(Player.points >= min_elo, *([Player.rank <= min_rank] if min_rank else []))
         .order_by(SQL("delta").desc())
         .limit(20)
         .dicts()
@@ -970,14 +994,14 @@ def get_hot_this_week_by_points_delta_funcs():
         if rank["min_elo"] < 2000:
             continue
 
-        def parent_func(min_elo):
+        def parent_func(min_elo, min_rank):
             def my_func(min_date, max_date):
-                return get_hot_this_week_by_points_delta(min_elo, min_date, max_date)
+                return get_hot_this_week_by_points_delta(min_elo, min_rank, min_date, max_date)
 
             my_func.__name__ = "get_hot_this_week_by_points_delta_" + str(min_elo)
             return my_func
 
-        funcs.append(parent_func(rank["min_elo"]))
+        funcs.append(parent_func(rank["min_elo"], rank["min_rank"]))
     return funcs
 
 
@@ -992,19 +1016,29 @@ def get_seasons_to_update() -> list:
     return list(Season.select().where(Season.end_time >= cutoff).order_by(Season.end_time.desc()))
 
 
-def get_new_players_per_week(min_elo, min_date, max_date):
+def get_new_players_per_week(rank, min_date, max_date):
     """For each week of the season, count players whose first qualifying game (at
     the given elo tier) fell within that week.  Week 0 = days 0-6 from season
     start, week 1 = days 7-13, etc."""
+    if rank["key"] == "tm":
+        elo_clause = "g.average_elo >= g.trackmaster_limit"
+        params = (min_date, max_date, min_date)
+    elif rank["key"] == "m3":
+        elo_clause = "g.average_elo >= %s AND g.average_elo < g.trackmaster_limit"
+        params = (rank["min_elo"], min_date, max_date, min_date)
+    else:
+        elo_clause = "g.min_elo >= %s"
+        params = (rank["min_elo"], min_date, max_date, min_date)
+
     cursor = Game._meta.database.execute_sql(
-        """
+        f"""
         WITH first_game AS (
             SELECT pg.player_id,
                    MIN(g.time) AS first_time
             FROM game g
             JOIN playergame pg ON pg.game_id = g.id
             WHERE g.average_elo > -1
-              AND g.min_elo >= %s
+              AND {elo_clause}
               AND g.time >= %s
               AND g.time <= %s
             GROUP BY pg.player_id
@@ -1015,7 +1049,7 @@ def get_new_players_per_week(min_elo, min_date, max_date):
         GROUP BY week_num
         ORDER BY week_num
         """,
-        (min_elo, min_date, max_date, min_date),
+        params,
     )
     data = []
     season_start_ts = min_date.timestamp() if hasattr(min_date, "timestamp") else min_date
@@ -1035,18 +1069,18 @@ def get_new_players_per_week_funcs():
     funcs = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_new_players_per_week(min_elo, min_date, max_date)
+                return get_new_players_per_week(r, min_date, max_date)
 
-            my_func.__name__ = "get_new_players_per_week_" + str(min_elo)
+            my_func.__name__ = "get_new_players_per_week_" + str(r["min_elo"])
             return my_func
 
-        funcs.append(parent_func(rank["min_elo"]))
+        funcs.append(parent_func(rank))
     return funcs
 
 
-def get_cross_rank_frequency(min_elo, min_date, max_date):
+def get_cross_rank_frequency(rank, min_date, max_date):
     _THRESHOLDS = sorted(r["min_elo"] for r in RANKS)
     # [0, 300, 600, 1000, 1300, 1600, 2000, 2300, 2600, 3000, 3300, 3600, 4000]
 
@@ -1057,7 +1091,7 @@ def get_cross_rank_frequency(min_elo, min_date, max_date):
 
     rows = list(
         Game.select(bucket, fn.COUNT(Game.id).alias("count"))
-        .where(Game.average_elo > -1, Game.min_elo >= min_elo, Game.time >= min_date, Game.time <= max_date)
+        .where(Game.average_elo > -1, get_game_tier_condition(rank), Game.time >= min_date, Game.time <= max_date)
         .group_by(SQL("bucket"))
         .order_by(SQL("bucket"))
         .dicts()
@@ -1078,14 +1112,14 @@ def get_cross_rank_frequency_funcs():
     funcs = []
     for rank in RANKS:
 
-        def parent_func(min_elo):
+        def parent_func(r):
             def my_func(min_date, max_date):
-                return get_cross_rank_frequency(min_elo, min_date, max_date)
+                return get_cross_rank_frequency(r, min_date, max_date)
 
-            my_func.__name__ = "get_cross_rank_frequency_" + str(min_elo)
+            my_func.__name__ = "get_cross_rank_frequency_" + str(r["min_elo"])
             return my_func
 
-        funcs.append(parent_func(rank["min_elo"]))
+        funcs.append(parent_func(rank))
     return funcs
 
 

@@ -398,7 +398,7 @@ class TestGetActivityPerDayOfTheWeek:
         )
 
     def _call(self, min_elo=0, min_date=WINDOW_START, max_date=WINDOW_END):
-        return json.loads(get_activity_per_day_of_the_week(min_elo, min_date, max_date))
+        return json.loads(get_activity_per_day_of_the_week({"key": "other", "min_elo": min_elo}, min_date, max_date))
 
     # ── shape ─────────────────────────────────────────────────────────────────
 
@@ -557,8 +557,8 @@ class TestGetActivityDayOfTheWeekFuncs:
         """Verify closure binding: each function passes its own min_elo to the query."""
         captured = []
 
-        def fake_query(min_elo, min_date, max_date):
-            captured.append(min_elo)
+        def fake_query(rank, min_date, max_date):
+            captured.append(rank["min_elo"])
             return json.dumps({"results": {str(i): 0 for i in range(7)}, "last_updated": 0})
 
         import src.threads.update_big_queries as ubq
@@ -646,7 +646,7 @@ class TestGetPlayerRetention:
     def _call(self, min_elo=0, min_date=None, max_date=None):
         return json.loads(
             get_player_retention(
-                min_elo,
+                {"key": "other", "min_elo": min_elo},
                 min_date or self.BASE,
                 max_date or self.WINDOW_END,
             )
@@ -833,8 +833,8 @@ class TestGetPlayerRetentionFuncs:
     def test_each_function_captures_correct_min_elo(self, monkeypatch):
         captured = []
 
-        def fake_retention(min_elo, min_date, max_date):
-            captured.append(min_elo)
+        def fake_retention(rank, min_date, max_date):
+            captured.append(rank["min_elo"])
             return json.dumps({"results": [], "last_updated": 0})
 
         import src.threads.update_big_queries as ubq
@@ -917,8 +917,8 @@ class TestGetHotThisWeek:
     def _pg(self, player, game, is_win=False):
         return PlayerGame.create(player=player, game=game, is_win=is_win)
 
-    def _call(self, min_elo=0):
-        return json.loads(get_hot_this_week(min_elo, None, None))
+    def _call(self, min_elo=0, min_rank=None):
+        return json.loads(get_hot_this_week(min_elo, min_rank, None, None))
 
     # ── shape / contract ──────────────────────────────────────────────────────
 
@@ -997,7 +997,7 @@ class TestGetHotThisWeek:
         self._pg(player_a, g, is_win=True)
         # pass far-past dates that would normally exclude this game
         far_past = datetime(2000, 1, 1)
-        data = json.loads(get_hot_this_week(0, far_past, far_past))
+        data = json.loads(get_hot_this_week(0, None, far_past, far_past))
         assert len(data["results"]) == 1
 
     # ── min_elo filter (based on Player.points, not Game.min_elo) ────────────
@@ -1105,14 +1105,14 @@ class TestGetHotThisWeekFuncs:
 
         calls = []
 
-        def fake_query(min_elo, min_date, max_date):
-            calls.append(min_elo)
+        def fake_query(min_elo, min_rank, min_date, max_date):
+            calls.append((min_elo, min_rank))
             return json.dumps({"last_updated": 0.0, "results": []})
 
         monkeypatch.setattr(ubq, "get_hot_this_week", fake_query)
         funcs = get_hot_this_week_funcs()
         funcs[0](datetime.now() - timedelta(days=30), datetime.now())
-        assert calls == [RANKS[0]["min_elo"]]
+        assert calls == [(RANKS[0]["min_elo"], RANKS[0]["min_rank"])]
 
 
 # ── get_hot_this_week registration ───────────────────────────────────────────
@@ -1191,8 +1191,8 @@ class TestGetHotThisWeekByPointsDelta:
     def _pg(self, player, game, points_after=None):
         return PlayerGame.create(player=player, game=game, points_after_match=points_after)
 
-    def _call(self, min_elo=0):
-        return json.loads(get_hot_this_week_by_points_delta(min_elo, None, None))
+    def _call(self, min_elo=0, min_rank=None):
+        return json.loads(get_hot_this_week_by_points_delta(min_elo, min_rank, None, None))
 
     # ── shape / contract ──────────────────────────────────────────────────────
 
@@ -1327,7 +1327,7 @@ class TestGetHotThisWeekByPointsDelta:
         g = self._game(map_obj, days_ago=1)
         self._pg(player_a, g, points_after=3000)
         far_past = datetime(2000, 1, 1)
-        data = json.loads(get_hot_this_week_by_points_delta(0, far_past, far_past))
+        data = json.loads(get_hot_this_week_by_points_delta(0, None, far_past, far_past))
         assert len(data["results"]) == 1
 
     # ── null points_after_match excluded ──────────────────────────────────────
@@ -1432,14 +1432,14 @@ class TestGetHotThisWeekByPointsDeltaFuncs:
 
         calls = []
 
-        def fake_query(min_elo, min_date, max_date):
-            calls.append(min_elo)
+        def fake_query(min_elo, min_rank, min_date, max_date):
+            calls.append((min_elo, min_rank))
             return json.dumps({"last_updated": 0.0, "results": []})
 
         monkeypatch.setattr(ubq, "get_hot_this_week_by_points_delta", fake_query)
         funcs = get_hot_this_week_by_points_delta_funcs()
         funcs[0](datetime.now() - timedelta(days=30), datetime.now())
-        assert calls == [RANKS[0]["min_elo"]]
+        assert calls == [(RANKS[0]["min_elo"], RANKS[0]["min_rank"])]
 
 
 # ── get_new_players_per_week ──────────────────────────────────────────────────
@@ -1482,7 +1482,9 @@ class TestGetNewPlayersPerWeek:
         return PlayerGame.create(player=player, game=game)
 
     def _call(self, min_elo=0):
-        return json.loads(get_new_players_per_week(min_elo, self.SEASON_START, self.SEASON_END))
+        return json.loads(
+            get_new_players_per_week({"key": "other", "min_elo": min_elo}, self.SEASON_START, self.SEASON_END)
+        )
 
     def _week(self, data, week_num):
         results = {r["week"]: r for r in data["results"]}
@@ -1780,8 +1782,8 @@ class TestGetNewPlayersPerWeekFuncs:
 
         calls = []
 
-        def fake_query(min_elo, min_date, max_date):
-            calls.append(min_elo)
+        def fake_query(rank, min_date, max_date):
+            calls.append(rank["min_elo"])
             return json.dumps({"last_updated": 0.0, "results": []})
 
         monkeypatch.setattr(ubq, "get_new_players_per_week", fake_query)
@@ -1832,7 +1834,7 @@ class TestGetActivityHeatmap:
     def _call(self, min_elo=0, min_date=None, max_date=None):
         return json.loads(
             get_activity_heatmap(
-                min_elo,
+                {"key": "other", "min_elo": min_elo},
                 min_date or self.BASE,
                 max_date or self.WINDOW_END,
             )
@@ -1984,8 +1986,8 @@ class TestGetActivityHeatmapFuncs:
 
         calls = []
 
-        def fake_query(min_elo, min_date, max_date):
-            calls.append(min_elo)
+        def fake_query(rank, min_date, max_date):
+            calls.append(rank["min_elo"])
             return json.dumps({"last_updated": 0.0, "results": []})
 
         monkeypatch.setattr(ubq, "get_activity_heatmap", fake_query)
@@ -2168,17 +2170,71 @@ class TestGetCountryH2H:
         assert rec["losses"] == 1
         assert rec["games"] == 3
 
-    def test_both_countries_winning_same_game_counted_as_win_for_both(self, tmp_path, map_obj, player_fra, player_ger):
-        # FRA and GER both have a winning player in the same game
+    def test_same_team_winners_not_counted_in_h2h(self, tmp_path, map_obj, player_fra, player_ger):
+        # FRA and GER are on the same winning team — should not appear in each other's h2h
         g = self._game(map_obj)
         self._pg(player_fra, g, is_win=True)
         self._pg(player_ger, g, is_win=True)
         path, sid = self._call(tmp_path)
+        # No cross-team opponent → no files written at all
+        import pytest as _pytest
+
+        with _pytest.raises(FileNotFoundError):
+            self._read(path, sid, "FRA")
+
+    def test_same_team_losers_not_counted_in_h2h(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
+        # FRA and GER are both losers against ESP — should not appear in each other's h2h
+        g = self._game(map_obj)
+        self._pg(player_esp, g, is_win=True)
+        self._pg(player_fra, g, is_win=False)
+        self._pg(player_ger, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
+        assert ger_rec is None
+        assert fra_rec is None
+
+    def test_same_team_game_does_not_inflate_h2h(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
+        # Game 1: FRA beats GER (cross-team, counts)
+        g1 = self._game(map_obj, days_offset=1)
+        self._pg(player_fra, g1, is_win=True)
+        self._pg(player_ger, g1, is_win=False)
+        # Game 2: FRA and GER are both winners against ESP (same team, must not count)
+        g2 = self._game(map_obj, days_offset=2)
+        self._pg(player_fra, g2, is_win=True)
+        self._pg(player_ger, g2, is_win=True)
+        self._pg(player_esp, g2, is_win=False)
+        path, sid = self._call(tmp_path)
         fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
         ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        # Only game 1 counts for FRA vs GER
         assert fra_rec["wins"] == 1
-        assert ger_rec["wins"] == 1
+        assert fra_rec["losses"] == 0
         assert fra_rec["games"] == 1
+        # Symmetry must hold
+        assert ger_rec["wins"] == 0
+        assert ger_rec["losses"] == 1
+
+    def test_wins_losses_symmetric_with_mixed_games(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
+        # FRA beats GER twice
+        for i in range(2):
+            g = self._game(map_obj, days_offset=i + 1)
+            self._pg(player_fra, g, is_win=True)
+            self._pg(player_ger, g, is_win=False)
+        # GER beats FRA once
+        g = self._game(map_obj, days_offset=3)
+        self._pg(player_ger, g, is_win=True)
+        self._pg(player_fra, g, is_win=False)
+        # FRA and GER on same winning team (should be ignored)
+        g = self._game(map_obj, days_offset=4)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=True)
+        self._pg(player_esp, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        fra_rec = self._record(self._read(path, sid, "FRA"), "GER")
+        ger_rec = self._record(self._read(path, sid, "GER"), "FRA")
+        assert fra_rec["wins"] == ger_rec["losses"] == 2
+        assert fra_rec["losses"] == ger_rec["wins"] == 1
 
     # ── three-country game ────────────────────────────────────────────────────
 
@@ -2192,6 +2248,20 @@ class TestGetCountryH2H:
         opponents = {r["opponent"]["alpha3"] for r in fra_data["results"]}
         assert "GER" in opponents
         assert "ESP" in opponents
+
+    def test_three_countries_same_team_losers_not_paired(self, tmp_path, map_obj, player_fra, player_ger, player_esp):
+        # FRA wins; GER and ESP both lose — GER vs ESP should not appear in h2h
+        g = self._game(map_obj)
+        self._pg(player_fra, g, is_win=True)
+        self._pg(player_ger, g, is_win=False)
+        self._pg(player_esp, g, is_win=False)
+        path, sid = self._call(tmp_path)
+        ger_data = self._read(path, sid, "GER")
+        esp_data = self._read(path, sid, "ESP")
+        ger_vs_esp = self._record(ger_data, "ESP")
+        esp_vs_ger = self._record(esp_data, "GER")
+        assert ger_vs_esp is None
+        assert esp_vs_ger is None
 
     # ── min_elo filtering ─────────────────────────────────────────────────────
 
@@ -2448,7 +2518,7 @@ class TestGetCrossRankFrequency:
         )
 
     def _call(self, min_elo=0):
-        return json.loads(get_cross_rank_frequency(min_elo, self.BASE, self.MAX_DATE))
+        return json.loads(get_cross_rank_frequency({"key": "other", "min_elo": min_elo}, self.BASE, self.MAX_DATE))
 
     def _bucket(self, data, spread_min):
         return next(r for r in data["results"] if r["spread_min"] == spread_min)
@@ -2705,8 +2775,8 @@ class TestGetCrossRankFrequencyFuncs:
     def test_each_function_captures_correct_min_elo(self, monkeypatch):
         captured = []
 
-        def fake_crf(min_elo, min_date, max_date):
-            captured.append(min_elo)
+        def fake_crf(rank, min_date, max_date):
+            captured.append(rank["min_elo"])
             return json.dumps({"results": [], "last_updated": 0})
 
         import src.threads.update_big_queries as ubq
