@@ -1769,7 +1769,7 @@ def _make_pg(player, game, points_after=None, rank_after=None, is_win=False, is_
 class TestGetStatisticsPerRank:
 
     def _call(self, **kwargs):
-        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=None)
+        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=datetime.now().timestamp() + 3600)
         defaults.update(kwargs)
         return PlayerAPIViews.get_statistics_per_rank(**defaults)
 
