@@ -21,6 +21,8 @@ create_season:
 	${PYTHON_TTY} scripts/create_season.py
 recompute_season_positions:
 	${PYTHON_TTY} scripts/recompute_season_positions.py ${SEASON_ID}
+recompute_big_queries:
+	${PYTHON_TTY} scripts/recompute_big_queries.py ${SEASON_ID} $(if ${STATS},--stats ${STATS},)
 watch:
 	${DOCKER_EXE_TTY} mmstatus_web pem watch
 migrate:

@@ -41,5 +41,5 @@ class UpdatePlayerCountriesThread(AbstractThread):
                     "General error in the thread",
                     extra={"exception": e, "traceback": traceback.format_exc()},
                 )
-            logger.info("Waiting 5s before updating data...")
-            time.sleep(5)
+            logger.info("Waiting 10s before updating data...")
+            time.sleep(10)

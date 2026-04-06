@@ -10,8 +10,8 @@ logger = create_logger("update_player_regions")
 
 class UpdatePlayerRegionsThread(AbstractThread):
     def run_iteration(self):
-        logger.info("Fetching first 50 players without region info")
-        players = Player.select(Player).where(Player.country != None, Player.region == None).paginate(1, 50)
+        logger.info("Fetching first 500 players without region info")
+        players = Player.select(Player).where(Player.country != None, Player.region == None).paginate(1, 500)
         logger.info(f"Found {len(players)} players")
         try:
             if len(players) == 0:
