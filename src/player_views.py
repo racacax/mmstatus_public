@@ -679,6 +679,7 @@ class PlayerAPIViews(RouteDescriber):
             formatted_default="<current timestamp>",
         ) = None,
         page: int = 1,
+        limit: int = 20,
     ):
         min_date = datetime.fromtimestamp(min_date)
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
@@ -706,7 +707,7 @@ class PlayerAPIViews(RouteDescriber):
                 Game.time <= max_date,
             )
             .order_by(Game.time.desc())
-            .paginate(page, 20)
+            .paginate(page, limit)
             .dicts()
         )
 
