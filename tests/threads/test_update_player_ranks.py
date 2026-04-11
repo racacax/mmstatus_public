@@ -18,12 +18,13 @@ def make_season(name="Current", start_delta=-timedelta(days=30), end_delta=timed
     return Season.create(name=name, start_time=NOW + start_delta, end_time=NOW + end_delta)
 
 
-def make_player(uuid_suffix="0001", points=1000, last_match=None, last_points_update=None):
+def make_player(uuid_suffix="0001", points=1000, last_match=None, last_points_update=None, points_fetch_retries=0):
     return Player.create(
         uuid=UUID(f"aaaaaaaa-0000-0000-0000-{uuid_suffix.zfill(12)}"),
         points=points,
         last_match=last_match,
         last_points_update=last_points_update or datetime.fromtimestamp(0),
+        points_fetch_retries=points_fetch_retries,
     )
 
 
@@ -279,12 +280,48 @@ class TestUpdatePlayers:
         UpdatePlayerRanksThread().update_players([p1], season)
         assert Player.get_by_id(p1.uuid).rank == 42
 
-    def test_player_absent_from_api_gets_zero(self, monkeypatch):
+    def test_player_absent_from_api_keeps_points(self, monkeypatch):
         season = make_season()
         p = make_player(uuid_suffix="0001", points=500)
         monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
         UpdatePlayerRanksThread().update_players([p], season)
+        assert Player.get_by_id(p.uuid).points == 500
+
+    def test_player_absent_from_api_increments_retries(self, monkeypatch):
+        season = make_season()
+        p = make_player(uuid_suffix="0001", points=500, points_fetch_retries=3)
+        monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
+        UpdatePlayerRanksThread().update_players([p], season)
+        assert Player.get_by_id(p.uuid).points_fetch_retries == 4
+
+    def test_player_absent_from_api_updates_last_points_update(self, monkeypatch):
+        season = make_season()
+        p = make_player(uuid_suffix="0001", points=500)
+        monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
+        before = datetime.now().replace(microsecond=0)
+        UpdatePlayerRanksThread().update_players([p], season)
+        assert Player.get_by_id(p.uuid).last_points_update >= before
+
+    def test_player_absent_after_max_retries_gets_zero(self, monkeypatch):
+        season = make_season()
+        p = make_player(uuid_suffix="0001", points=500, points_fetch_retries=19)
+        monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
+        UpdatePlayerRanksThread().update_players([p], season)
         assert Player.get_by_id(p.uuid).points == 0
+
+    def test_player_absent_after_max_retries_resets_retries(self, monkeypatch):
+        season = make_season()
+        p = make_player(uuid_suffix="0001", points=500, points_fetch_retries=19)
+        monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
+        UpdatePlayerRanksThread().update_players([p], season)
+        assert Player.get_by_id(p.uuid).points_fetch_retries == 0
+
+    def test_player_present_resets_retries(self, monkeypatch):
+        season = make_season()
+        p = make_player(uuid_suffix="0001", points=500, points_fetch_retries=5)
+        patch_ranks(monkeypatch, {p.uuid: (1500, 100)})
+        UpdatePlayerRanksThread().update_players([p], season)
+        assert Player.get_by_id(p.uuid).points_fetch_retries == 0
 
     def test_api_exception_records_error(self, monkeypatch):
         season = make_season()
@@ -374,6 +411,19 @@ class TestRunIteration:
         )
         UpdatePlayerRanksThread().run_iteration()
         assert order.index(str(older.uuid)) < order.index(str(newer.uuid))
+
+    def test_retries_zero_points_player_with_pending_retries(self, monkeypatch):
+        make_season()
+        called_with = []
+        # 0 points but retries > 0 — should still be fetched
+        p = make_player(points=0, last_points_update=datetime.now() - timedelta(hours=13), points_fetch_retries=2)
+        monkeypatch.setattr(
+            NadeoLive,
+            "get_player_ranks",
+            lambda ids: called_with.extend(ids) or {"results": []},
+        )
+        UpdatePlayerRanksThread().run_iteration()
+        assert str(p.uuid) in called_with
 
     def test_no_crash_when_no_seasons(self, monkeypatch):
         p = make_player()

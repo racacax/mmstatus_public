@@ -71,16 +71,37 @@ class UpdatePlayerRanksThread(AbstractThread):
                 },
             )
 
+    MAX_POINTS_FETCH_RETRIES = 20
+
     def update_players(self, players: list[Player], season: Season):
         try:
             ids = [str(p.uuid) for p in players]
             logger.info("Updating players", extra={"ids": ids})
-            ranks = NadeoLive.get_player_ranks(ids)
-            logger.info("get_player_ranks response", extra={"response": ranks})
-            scores = {p["player"]: p["score"] for p in ranks["results"]}
-            ranks = {p["player"]: p["rank"] for p in ranks["results"]}
+            result = NadeoLive.get_player_ranks(ids)
+            logger.info("get_player_ranks response", extra={"response": result})
+            scores = {p["player"]: p["score"] for p in result["results"]}
+            ranks = {p["player"]: p["rank"] for p in result["results"]}
             for p in players:
-                self.update_player(p, scores.get(str(p.uuid), 0), ranks.get(str(p.uuid), 0), season)
+                pid = str(p.uuid)
+                if pid not in scores:
+                    p.points_fetch_retries += 1
+                    if p.points_fetch_retries >= self.MAX_POINTS_FETCH_RETRIES:
+                        logger.warning(
+                            "Player absent from API after max retries, setting points to 0",
+                            extra={"player": p, "retries": p.points_fetch_retries},
+                        )
+                        p.points_fetch_retries = 0
+                        self.update_player(p, 0, 0, season)
+                    else:
+                        logger.info(
+                            "Player absent from API, will retry",
+                            extra={"player": p, "retries": p.points_fetch_retries},
+                        )
+                        p.last_points_update = datetime.now()
+                        p.save()
+                else:
+                    p.points_fetch_retries = 0
+                    self.update_player(p, scores[pid], ranks[pid], season)
         except Exception as e:
             self._record_error()
             logger.error(
@@ -98,7 +119,11 @@ class UpdatePlayerRanksThread(AbstractThread):
             Player.select(Player)
             .where(
                 (Player.last_points_update < datetime.now() - timedelta(hours=12))
-                & ((Player.points != 0) | (Player.last_points_update == datetime.fromtimestamp(0)))
+                & (
+                    (Player.points != 0)
+                    | (Player.last_points_update == datetime.fromtimestamp(0))
+                    | (Player.points_fetch_retries > 0)
+                )
             )
             .order_by(Player.last_points_update.asc())
             .paginate(1, 100)

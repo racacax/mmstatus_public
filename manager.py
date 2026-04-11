@@ -8,6 +8,7 @@ from src.threads.update_big_queries import (
 from src.threads.update_main_nadeo_token import UpdateMainNadeoTokenThread
 from src.threads.update_maps import UpdateMapsThread
 from src.threads.update_match_elo import UpdateMatchEloThread
+from src.threads.recompute_match_elo import RecomputeMatchEloThread
 from src.threads.update_matches import UpdateMatchesThread
 from src.threads.update_player_countries import UpdatePlayerCountriesThread
 from src.threads.update_player_regions import UpdatePlayerRegionsThread
@@ -42,6 +43,7 @@ if ENABLE_THREADS:
         UpdatePlayerRanksThread,
         UpdateMatchesThread,
         UpdateMatchEloThread,
+        RecomputeMatchEloThread,
         UpdateTopPlayersPositionThread,
         UpdateMainNadeoTokenThread,
         UpdateStatsPerRank,

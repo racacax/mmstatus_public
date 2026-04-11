@@ -59,6 +59,7 @@ class Player(BaseModel):
     country = ForeignKeyField(Zone, backref="player_countries", null=True)
     region = ForeignKeyField(Zone, backref="player_regions", null=True)
     club_tag = CharField(default=None, null=True, max_length=64)
+    points_fetch_retries = IntegerField(default=0)
 
     class Meta:
         ordering = ("-points",)
