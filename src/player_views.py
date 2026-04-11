@@ -290,13 +290,24 @@ class PlayerAPIViews(RouteDescriber):
         group_by: Option(
             str,
             description="On which opponent type should the stats be made",
-            enum=["uuid", "country", "club"],
+            enum=["uuid", "country", "club_tag"],
         ) = "uuid",
     ):
         min_date = datetime.fromtimestamp(min_date)
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
         data = get_query(min_date, max_date, player, group_by, f"total_{order_by}", order, page)
-        return 200, {"results": [e for e in data], "player": player}
+        results = []
+        for e in data:
+            if group_by == "uuid":
+                e = dict(e)
+                alpha3 = e.pop("country_alpha3", None)
+                e["country"] = alpha3 and {
+                    "name": e.pop("country_name", None),
+                    "file_name": e.pop("file_name", None),
+                    "alpha3": alpha3,
+                }
+            results.append(e)
+        return 200, {"results": results, "player": player}
 
     @staticmethod
     @route(

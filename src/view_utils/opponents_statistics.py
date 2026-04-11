@@ -1,7 +1,7 @@
 from datetime import datetime
 from typing import Union
 
-from peewee import fn, Case
+from peewee import fn, Case, JOIN
 
 from models import Player, PlayerGame, Game, Zone
 
@@ -48,7 +48,13 @@ def get_params(group_by: str, Opponent):
     if group_by == "country":
         return [Zone.name, Zone.file_name, Zone.country_alpha3]
     elif group_by == "uuid":
-        return [Opponent.name, Opponent.club_tag]
+        return [
+            Opponent.name,
+            Opponent.club_tag,
+            Zone.name.alias("country_name"),
+            Zone.file_name,
+            Zone.country_alpha3,
+        ]
     else:
         return []
 
@@ -75,6 +81,11 @@ def get_query(
 
         def apply(x):
             return x.join(Zone, on=(Opponent.country == Zone.id))
+
+    elif group_by == "uuid":
+
+        def apply(x):
+            return x.join(Zone, JOIN.LEFT_OUTER, on=(Opponent.country == Zone.id))
 
     else:
 

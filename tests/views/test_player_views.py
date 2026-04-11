@@ -1735,6 +1735,129 @@ class TestGetOpponentsStatisticsClubTag:
         assert "club_tag" not in data["results"][0]
 
 
+# ── get_opponents_statistics: country (group_by=uuid) ────────────────────────
+
+
+ZONE_UUID = "aaaaaaaa-0000-0000-0000-000000000300"
+ZONE_UUID_2 = "aaaaaaaa-0000-0000-0000-000000000301"
+
+
+class TestGetOpponentsStatisticsCountry:
+    """country field must be a nested object when group_by=uuid."""
+
+    def _call(self, **kwargs):
+        defaults = dict(
+            player=PLAYER_UUID,
+            order_by="played",
+            order="desc",
+            page=1,
+            min_date=0,
+            max_date=None,
+            group_by="uuid",
+        )
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_opponents_statistics(**defaults)
+
+    def _row(self, results):
+        return next(r for r in results if str(r["uuid"]) == str(OPPONENT_UUID))
+
+    def _make_zone(self, uuid=ZONE_UUID, name="France", alpha3="FRA", file_name="FRA"):
+        from models import Zone
+
+        return Zone.create(uuid=uuid, name=name, country_alpha3=alpha3, file_name=file_name)
+
+    # ── structure ─────────────────────────────────────────────────────────────
+
+    def test_country_key_present_when_opponent_has_country(self, player, map_obj):
+        z = self._make_zone()
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        assert "country" in self._row(data["results"])
+
+    def test_country_is_none_when_opponent_has_no_country(self, player, map_obj):
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=None)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        assert self._row(data["results"])["country"] is None
+
+    def test_country_flat_fields_not_exposed(self, player, map_obj):
+        z = self._make_zone()
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        row = self._row(data["results"])
+        assert "country_alpha3" not in row
+        assert "country_name" not in row
+        assert "file_name" not in row
+
+    # ── content ───────────────────────────────────────────────────────────────
+
+    def test_country_name_matches_zone(self, player, map_obj):
+        z = self._make_zone(name="France", alpha3="FRA")
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        assert self._row(data["results"])["country"]["name"] == "France"
+
+    def test_country_alpha3_matches_zone(self, player, map_obj):
+        z = self._make_zone(name="Germany", alpha3="DEU", file_name="DEU")
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        assert self._row(data["results"])["country"]["alpha3"] == "DEU"
+
+    def test_country_file_name_matches_zone(self, player, map_obj):
+        z = self._make_zone(name="Spain", alpha3="ESP", file_name="ESP")
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        assert self._row(data["results"])["country"]["file_name"] == "ESP"
+
+    def test_country_has_exactly_name_file_name_alpha3_keys(self, player, map_obj):
+        z = self._make_zone()
+        opp = Player.create(uuid=OPPONENT_UUID, name="Opp", country=z)
+        make_versus_game(map_obj, player, opp, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        assert set(self._row(data["results"])["country"].keys()) == {"name", "file_name", "alpha3"}
+
+    # ── multiple opponents ────────────────────────────────────────────────────
+
+    def test_different_opponents_show_their_own_country(self, player, map_obj):
+        OPPONENT_UUID_2 = UUID("cccccccc-0000-0000-0000-000000000003")
+        z1 = self._make_zone(uuid=ZONE_UUID, name="France", alpha3="FRA", file_name="FRA")
+        z2 = self._make_zone(uuid=ZONE_UUID_2, name="Germany", alpha3="DEU", file_name="DEU")
+        opp1 = Player.create(uuid=OPPONENT_UUID, name="Opp1", country=z1)
+        opp2 = Player.create(uuid=OPPONENT_UUID_2, name="Opp2", country=z2)
+        make_versus_game(map_obj, player, opp1, player_wins=True, is_finished=True)
+        make_versus_game(map_obj, player, opp2, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        results = {str(r["uuid"]): r for r in data["results"]}
+        assert results[str(OPPONENT_UUID)]["country"]["alpha3"] == "FRA"
+        assert results[str(OPPONENT_UUID_2)]["country"]["alpha3"] == "DEU"
+
+    def test_mixed_opponents_with_and_without_country(self, player, map_obj):
+        OPPONENT_UUID_2 = UUID("cccccccc-0000-0000-0000-000000000003")
+        z = self._make_zone()
+        opp1 = Player.create(uuid=OPPONENT_UUID, name="Opp1", country=z)
+        opp2 = Player.create(uuid=OPPONENT_UUID_2, name="Opp2", country=None)
+        make_versus_game(map_obj, player, opp1, player_wins=True, is_finished=True)
+        make_versus_game(map_obj, player, opp2, player_wins=True, is_finished=True)
+
+        _, data = self._call()
+        results = {str(r["uuid"]): r for r in data["results"]}
+        assert results[str(OPPONENT_UUID)]["country"]["alpha3"] == "FRA"
+        assert results[str(OPPONENT_UUID_2)]["country"] is None
+
+
 # ── get_statistics_per_rank ───────────────────────────────────────────────────
 
 TM_RANK = next(r for r in RANKS if r["key"] == "tm")
