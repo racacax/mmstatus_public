@@ -278,6 +278,10 @@ class PlayerAPIViews(RouteDescriber):
             enum=["asc", "desc"],
         ) = "desc",
         page: int = 1,
+        limit: Option(
+            int,
+            description="Number of results per page (max 100)",
+        ) = 10,
         min_date: Option(
             int,
             description="Unix timestamp representing the start date of filtered data",
@@ -293,9 +297,10 @@ class PlayerAPIViews(RouteDescriber):
             enum=["uuid", "country", "club_tag"],
         ) = "uuid",
     ):
+        limit = max(1, min(limit, 100))
         min_date = datetime.fromtimestamp(min_date)
         max_date = datetime.fromtimestamp(max_date or datetime.now().timestamp())
-        data = get_query(min_date, max_date, player, group_by, f"total_{order_by}", order, page)
+        data = get_query(min_date, max_date, player, group_by, f"total_{order_by}", order, page, limit)
         results = []
         for e in data:
             if group_by == "uuid":

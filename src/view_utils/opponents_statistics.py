@@ -67,6 +67,7 @@ def get_query(
     order_by: str,
     order: Union["desc", "asc"],
     page: int,
+    limit: int = 10,
 ) -> list:
     Opponent = Player.alias("opponent")
     OpponentGame = PlayerGame.alias("pg2")
@@ -113,6 +114,6 @@ def get_query(
         )
         .group_by(group_by_obj)
         .order_by(order_by)
-        .paginate(page, 10)
+        .paginate(page, limit)
         .dicts()
     )
