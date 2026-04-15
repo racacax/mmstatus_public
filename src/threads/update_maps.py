@@ -10,7 +10,7 @@ from src.threads.abstract_thread import AbstractThread
 
 logger = create_logger("update_maps")
 
-SEASON_NAMES = ["Spring", "Summer", "Fall", "Winter"]
+SEASON_NAMES = ["Winter", "Spring", "Summer", "Fall"]
 _MAP_SEASON_RE = re.compile(r"^(Spring|Summer|Fall|Winter)\s+(\d{4})\s*-")
 _SEASON_NAME_RE = re.compile(r"^(Spring|Summer|Fall|Winter)\s+(\d{4})$")
 

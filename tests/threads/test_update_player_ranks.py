@@ -78,23 +78,24 @@ class TestUpdatePlayerBasic:
         UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
         assert Player.get_by_id(p.uuid).last_points_update >= before
 
-    def test_creates_player_season_if_not_exists(self):
+    def test_does_not_create_player_season_if_not_exists(self):
         season = make_season()
         p = make_player()
-        assert PlayerSeason.get_or_none(player=p, season=season) is None
         UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
-        assert PlayerSeason.get_or_none(player=p, season=season) is not None
+        assert PlayerSeason.get_or_none(player=p, season=season) is None
 
-    def test_updates_player_season_points(self):
+    def test_updates_existing_player_season_points(self):
         season = make_season()
         p = make_player()
+        PlayerSeason.create(player=p, season=season, points=500, rank=999)
         UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
         ps = PlayerSeason.get(player=p, season=season)
         assert ps.points == 1500
 
-    def test_updates_player_season_rank(self):
+    def test_updates_existing_player_season_rank(self):
         season = make_season()
         p = make_player()
+        PlayerSeason.create(player=p, season=season, points=500, rank=999)
         UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
         ps = PlayerSeason.get(player=p, season=season)
         assert ps.rank == 200
@@ -114,6 +115,12 @@ class TestUpdatePlayerBasic:
         UpdatePlayerRanksThread().update_player(p, 1500, 200, None)
         # points still updated
         assert Player.get_by_id(p.uuid).points == 1500
+
+    def test_no_player_season_created_when_points_zero(self):
+        season = make_season()
+        p = make_player()
+        UpdatePlayerRanksThread().update_player(p, 0, 0, season)
+        assert PlayerSeason.get_or_none(player=p, season=season) is None
 
 
 # ── update_player: points_after_match (same season) ──────────────────────────
@@ -226,6 +233,7 @@ class TestUpdatePlayerPointsAfterMatchPreviousSeason:
         old_season, new_season, game = self._setup_transition()
         p = make_player(last_match=game)
         PlayerSeason.create(player=p, season=old_season, points=800, rank=300)
+        PlayerSeason.create(player=p, season=new_season, points=0, rank=0)
         make_player_game(p, game)
         UpdatePlayerRanksThread().update_player(p, 1500, 200, new_season)
         ps = PlayerSeason.get(player=p, season=new_season)
@@ -337,14 +345,23 @@ class TestUpdatePlayers:
         monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: (_ for _ in ()).throw(RuntimeError("down")))
         UpdatePlayerRanksThread().update_players([p], season)  # must not raise
 
-    def test_creates_player_season_for_each_player(self, monkeypatch):
+    def test_updates_player_season_for_each_player_when_exists(self, monkeypatch):
         season = make_season()
         p1 = make_player(uuid_suffix="0001")
         p2 = make_player(uuid_suffix="0002")
+        PlayerSeason.create(player=p1, season=season, points=0, rank=0)
+        PlayerSeason.create(player=p2, season=season, points=0, rank=0)
         patch_ranks(monkeypatch, {p1.uuid: (1000, 10), p2.uuid: (2000, 5)})
         UpdatePlayerRanksThread().update_players([p1, p2], season)
-        assert PlayerSeason.get_or_none(player=p1, season=season) is not None
-        assert PlayerSeason.get_or_none(player=p2, season=season) is not None
+        assert PlayerSeason.get(player=p1, season=season).points == 1000
+        assert PlayerSeason.get(player=p2, season=season).points == 2000
+
+    def test_does_not_create_player_season_when_not_exists(self, monkeypatch):
+        season = make_season()
+        p1 = make_player(uuid_suffix="0001")
+        patch_ranks(monkeypatch, {p1.uuid: (1000, 10)})
+        UpdatePlayerRanksThread().update_players([p1], season)
+        assert PlayerSeason.get_or_none(player=p1, season=season) is None
 
 
 # ── run_iteration ─────────────────────────────────────────────────────────────

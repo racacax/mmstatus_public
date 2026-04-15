@@ -94,14 +94,14 @@ class TestExpectedNextSeason:
     def test_summer_to_fall(self):
         assert expected_next_season("Summer 2025") == ("Fall", 2025)
 
-    def test_fall_to_winter(self):
-        assert expected_next_season("Fall 2025") == ("Winter", 2025)
+    def test_fall_to_winter_increments_year(self):
+        assert expected_next_season("Fall 2025") == ("Winter", 2026)
 
-    def test_winter_to_spring_increments_year(self):
-        assert expected_next_season("Winter 2025") == ("Spring", 2026)
+    def test_winter_to_spring_same_year(self):
+        assert expected_next_season("Winter 2025") == ("Spring", 2025)
 
-    def test_winter_2023_to_spring_2024(self):
-        assert expected_next_season("Winter 2023") == ("Spring", 2024)
+    def test_winter_2026_to_spring_2026(self):
+        assert expected_next_season("Winter 2026") == ("Spring", 2026)
 
     def test_invalid_season_name_returns_none(self):
         assert expected_next_season("BadSeason 2025") is None
@@ -245,27 +245,34 @@ class TestCheckSeasonTransition:
         check_season_transition(m)
         assert Season.select().where(Season.name == "Fall 2025").exists()
 
-    def test_winter_fall_transition(self):
+    def test_fall_to_winter_transition_increments_year(self):
         make_season("Fall 2025")
-        m = make_map(name="Winter 2025 - 01")
+        m = make_map(name="Winter 2026 - 01")
         make_game(m, time=TRANSITION)
         check_season_transition(m)
-        assert Season.select().where(Season.name == "Winter 2025").exists()
+        assert Season.select().where(Season.name == "Winter 2026").exists()
 
-    def test_spring_winter_transition_increments_year(self):
+    def test_winter_to_spring_transition_same_year(self):
         make_season("Winter 2025")
-        m = make_map(name="Spring 2026 - 01")
+        m = make_map(name="Spring 2025 - 01")
         make_game(m, time=TRANSITION)
         check_season_transition(m)
-        assert Season.select().where(Season.name == "Spring 2026").exists()
+        assert Season.select().where(Season.name == "Spring 2025").exists()
 
-    def test_spring_winter_transition_does_not_create_wrong_year(self):
+    def test_winter_to_spring_does_not_create_wrong_year(self):
         make_season("Winter 2025")
-        m = make_map(name="Spring 2025 - 01")  # wrong year
+        m = make_map(name="Spring 2026 - 01")  # wrong year
         make_game(m, time=TRANSITION)
         initial_count = Season.select().count()
         check_season_transition(m)
         assert Season.select().count() == initial_count
+
+    def test_winter_2026_to_spring_2026_transition(self):
+        make_season("Winter 2026")
+        m = make_map(name="Spring 2026 - 10")
+        make_game(m, time=TRANSITION)
+        check_season_transition(m)
+        assert Season.select().where(Season.name == "Spring 2026").exists()
 
     # ── idempotency ───────────────────────────────────────────────────────────
 

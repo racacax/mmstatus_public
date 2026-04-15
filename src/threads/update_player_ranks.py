@@ -29,10 +29,11 @@ class UpdatePlayerRanksThread(AbstractThread):
             p.last_points_update = datetime.now()
             p.save()
 
-            ps, _ = PlayerSeason.get_or_create(player=p, season=season)
-            ps.points = p.points
-            ps.rank = p.rank
-            ps.save()
+            ps = PlayerSeason.get_or_none(player=p, season=season)
+            if ps:
+                ps.points = p.points
+                ps.rank = p.rank
+                ps.save()
             if p.last_match and p.last_match.is_finished:
                 pg = PlayerGame.get(game=p.last_match, player=p)
             else:
