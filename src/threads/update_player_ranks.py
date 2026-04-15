@@ -29,8 +29,8 @@ class UpdatePlayerRanksThread(AbstractThread):
             p.last_points_update = datetime.now()
             p.save()
 
-            ps = PlayerSeason.get_or_none(player=p, season=season)
-            if ps:
+            if points > 0:
+                ps, _ = PlayerSeason.get_or_create(player=p, season=season)
                 ps.points = p.points
                 ps.rank = p.rank
                 ps.save()

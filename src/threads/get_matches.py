@@ -5,7 +5,7 @@ from typing import Union
 
 import settings
 from src.threads.abstract_thread import AbstractThread
-from models import PlayerGame, Game, Map, Player, PlayerSeason, Season
+from models import PlayerGame, Game, Map, Player
 from src.log_utils import create_logger
 from src.services import NadeoLive
 from src.types import NadeoMatch, NadeoParticipant
@@ -112,17 +112,10 @@ class GetMatchesThread(AbstractThread):
                     )
 
                     players_o = self.get_or_create_players(participants, match_o)
-                    season = Season.get_current_season()
 
                     # Link players to current match with intermediate table
                     for p in players_o:
                         PlayerGame.create(game=match_o, player=p)
-                        if season:
-                            PlayerSeason.get_or_create(
-                                player=p,
-                                season=season,
-                                defaults={"points": p.points, "rank": p.rank},
-                            )
                 else:
                     logger.info(f"Got match name {name} which is not a valid Matchmaking name. Skipping...")
                     return True
