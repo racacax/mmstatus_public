@@ -98,8 +98,7 @@ class UpdatePlayerRanksThread(AbstractThread):
                             "Player absent from API, will retry",
                             extra={"player": p, "retries": p.points_fetch_retries},
                         )
-                        p.last_points_update = datetime.now()
-                        p.save()
+                        p.save(only=[Player.points_fetch_retries])
                 else:
                     p.points_fetch_retries = 0
                     self.update_player(p, scores[pid], ranks[pid], season)

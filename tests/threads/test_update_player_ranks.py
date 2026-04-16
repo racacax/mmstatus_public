@@ -300,13 +300,13 @@ class TestUpdatePlayers:
         UpdatePlayerRanksThread().update_players([p], season)
         assert Player.get_by_id(p.uuid).points_fetch_retries == 4
 
-    def test_player_absent_from_api_updates_last_points_update(self, monkeypatch):
+    def test_player_absent_from_api_does_not_update_last_points_update(self, monkeypatch):
         season = make_season()
         p = make_player(uuid_suffix="0001", points=500)
+        original_update = p.last_points_update
         monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
-        before = datetime.now().replace(microsecond=0)
         UpdatePlayerRanksThread().update_players([p], season)
-        assert Player.get_by_id(p.uuid).last_points_update >= before
+        assert Player.get_by_id(p.uuid).last_points_update == original_update
 
     def test_player_absent_after_max_retries_gets_zero(self, monkeypatch):
         season = make_season()
