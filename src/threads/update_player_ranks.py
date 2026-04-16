@@ -119,11 +119,7 @@ class UpdatePlayerRanksThread(AbstractThread):
             Player.select(Player)
             .where(
                 (Player.last_points_update < datetime.now() - timedelta(hours=12))
-                & (
-                    (Player.points != 0)
-                    | (Player.last_points_update == datetime.fromtimestamp(0))
-                    | (Player.points_fetch_retries > 0)
-                )
+                & ((Player.points != 0) | (Player.last_points_update == datetime.fromtimestamp(0)))
             )
             .order_by(Player.last_points_update.asc())
             .paginate(1, 100)

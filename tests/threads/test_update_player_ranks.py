@@ -418,18 +418,6 @@ class TestRunIteration:
         UpdatePlayerRanksThread().run_iteration()
         assert order.index(str(older.uuid)) < order.index(str(newer.uuid))
 
-    def test_retries_zero_points_player_with_pending_retries(self, monkeypatch):
-        make_season()
-        called_with = []
-        # 0 points but retries > 0 — should still be fetched
-        p = make_player(points=0, last_points_update=datetime.now() - timedelta(hours=13), points_fetch_retries=2)
-        monkeypatch.setattr(
-            NadeoLive,
-            "get_player_ranks",
-            lambda ids: called_with.extend(ids) or {"results": []},
-        )
-        UpdatePlayerRanksThread().run_iteration()
-        assert str(p.uuid) in called_with
 
     def test_no_crash_when_no_seasons(self, monkeypatch):
         p = make_player()
