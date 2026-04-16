@@ -884,7 +884,7 @@ def get_hot_this_week(min_elo, min_rank, _min_date, _max_date):
 def get_hot_this_week_funcs():
     funcs = []
     for rank in RANKS:
-        if rank["min_elo"] < 2000:
+        if rank["min_elo"] < 3000:
             continue
 
         def parent_func(min_elo, min_rank):
@@ -991,7 +991,7 @@ def get_hot_this_week_by_points_delta(min_elo, min_rank, _min_date, _max_date):
 def get_hot_this_week_by_points_delta_funcs():
     funcs = []
     for rank in RANKS:
-        if rank["min_elo"] < 2000:
+        if rank["min_elo"] < 3000:
             continue
 
         def parent_func(min_elo, min_rank):

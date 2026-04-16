@@ -1084,7 +1084,7 @@ class TestGetHotThisWeek:
 
 # ── get_hot_this_week_funcs ───────────────────────────────────────────────────
 
-HOT_RANKS = [r for r in RANKS if r["min_elo"] >= 2000]
+HOT_RANKS = [r for r in RANKS if r["min_elo"] >= 3000]
 
 
 class TestGetHotThisWeekFuncs:
