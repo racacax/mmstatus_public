@@ -418,7 +418,6 @@ class TestRunIteration:
         UpdatePlayerRanksThread().run_iteration()
         assert order.index(str(older.uuid)) < order.index(str(newer.uuid))
 
-
     def test_no_crash_when_no_seasons(self, monkeypatch):
         p = make_player()
         patch_ranks(monkeypatch, {p.uuid: (1000, 10)})

@@ -331,6 +331,95 @@ class TestGetStatistics:
         assert stats["total_losses"] == 2
 
 
+# ── get_statistics: player with PlayerSeason but no games ────────────────────
+
+
+class TestGetStatisticsNoGames:
+    """
+    A PlayerSeason exists but the player played zero games in the season.
+    The endpoint must return 200 with zeroed counters instead of 404.
+    """
+
+    def _call(self, **kwargs):
+        defaults = dict(player=PLAYER_UUID, min_date=0, max_date=None, season=-1)
+        defaults.update(kwargs)
+        return PlayerAPIViews.get_statistics(**defaults)
+
+    def test_returns_200_when_player_season_exists_but_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        status, _ = self._call()
+        assert status == 200
+
+    def test_returns_player_season_points_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["points"] == 1500
+
+    def test_returns_player_season_rank_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["rank"] == 25
+
+    def test_returns_zero_total_played_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["total_played"] == 0
+
+    def test_returns_zero_total_wins_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["total_wins"] == 0
+
+    def test_returns_zero_total_losses_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["total_losses"] == 0
+
+    def test_returns_zero_total_mvp_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["total_mvp"] == 0
+
+    def test_returns_player_name_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["name"] == "TestPlayer"
+
+    def test_returns_season_name_when_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        _, data = self._call()
+        assert data["stats"]["season"] == season.name
+
+    def test_returns_404_when_no_player_season_and_no_games(self, player, season):
+        status, _ = self._call()
+        assert status == 404
+
+    def test_returns_404_when_no_player_season_even_if_games_exist(self, player, map_obj, season):
+        make_player_game(player, make_game(map_obj, is_finished=True), is_win=True)
+        status, _ = self._call()
+        assert status == 404
+
+    def test_games_still_counted_when_player_season_exists(self, player, map_obj, season):
+        PlayerSeason.create(player=player, season=season, points=1500, rank=25)
+        make_player_game(player, make_game(map_obj, is_finished=True), is_win=True)
+        make_player_game(player, make_game(map_obj, is_finished=True), is_win=False)
+        _, data = self._call()
+        assert data["stats"]["total_played"] == 2
+        assert data["stats"]["total_wins"] == 1
+        assert data["stats"]["total_losses"] == 1
+
+    def test_explicit_season_id_no_games(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=800, rank=100)
+        status, data = self._call(season=season.id)
+        assert status == 200
+        assert data["stats"]["points"] == 800
+
+    def test_wrong_season_returns_404(self, player, season):
+        PlayerSeason.create(player=player, season=season, points=800, rank=100)
+        status, _ = self._call(season=season.id + 999)
+        assert status == 404
+
+
 # ── get_statistics: multi-season time range ───────────────────────────────────
 
 

@@ -549,52 +549,49 @@ class PlayerAPIViews(RouteDescriber):
                 },
             }
 
-        query = (
-            PlayerSeason.select(
-                Player.uuid,
-                Player.name,
-                PlayerSeason.club_tag.alias("club_tag"),
-                PlayerSeason.rank,
-                PlayerSeason.points,
+        ps = (
+            PlayerSeason.select(PlayerSeason, Player)
+            .join(Player)
+            .where(Player.uuid == player, PlayerSeason.season == selected_season)
+            .get_or_none()
+        )
+        if not ps:
+            return 404, {"message": "Current player either doesn't exist or didn't play this season"}
+
+        game_stats = (
+            PlayerGame.select(
                 total_played.alias("total_played"),
                 total_wins.alias("total_wins"),
                 total_losses.alias("total_losses"),
                 total_mvp.alias("total_mvp"),
             )
-            .join(Player, JOIN.LEFT_OUTER)
-            .join(PlayerGame, JOIN.LEFT_OUTER)
             .join(Game, JOIN.LEFT_OUTER)
             .where(
-                Player.uuid == player,
+                PlayerGame.player_id == player,
                 Game.time >= min_date,
                 Game.time <= max_date,
-                PlayerSeason.season == selected_season,
             )
-            .group_by(Player.uuid)
             .dicts()
-        )
-        if len(query) > 0:
-            data = query[0]
-            max_wins, max_losses, cur_win_streak = _compute_streaks(_get_streak_sequence(player, min_date, max_date))
-            return 200, {
-                "uuid": str(data["uuid"]),
-                "name": data["name"],
-                "club_tag": data["club_tag"],
-                "stats": {
-                    "season": selected_season.name,
-                    "rank": data["rank"],
-                    "points": data["points"],
-                    "total_played": int(data["total_played"]),
-                    "total_wins": int(data["total_wins"]),
-                    "total_losses": int(data["total_losses"]),
-                    "total_mvp": int(data["total_mvp"]),
-                    "most_wins_in_a_row": max_wins,
-                    "most_losses_in_a_row": max_losses,
-                    "current_win_streak": cur_win_streak,
-                },
-            }
-        else:
-            return 404, {"message": "Current player either doesn't exist or didn't play this season"}
+        )[0]
+
+        max_wins, max_losses, cur_win_streak = _compute_streaks(_get_streak_sequence(player, min_date, max_date))
+        return 200, {
+            "uuid": str(ps.player.uuid),
+            "name": ps.player.name,
+            "club_tag": ps.club_tag,
+            "stats": {
+                "season": selected_season.name,
+                "rank": ps.rank,
+                "points": ps.points,
+                "total_played": int(game_stats["total_played"] or 0),
+                "total_wins": int(game_stats["total_wins"] or 0),
+                "total_losses": int(game_stats["total_losses"] or 0),
+                "total_mvp": int(game_stats["total_mvp"] or 0),
+                "most_wins_in_a_row": max_wins,
+                "most_losses_in_a_row": max_losses,
+                "current_win_streak": cur_win_streak,
+            },
+        }
 
     @staticmethod
     @route(
