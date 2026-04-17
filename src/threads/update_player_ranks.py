@@ -2,8 +2,6 @@ import time
 import traceback
 from datetime import datetime, timedelta
 
-from peewee import JOIN
-
 from models import Player, PlayerGame, Season, PlayerSeason, Game
 from src.log_utils import create_logger
 from src.services import NadeoLive
@@ -34,19 +32,18 @@ class UpdatePlayerRanksThread(AbstractThread):
                 ps.points = p.points
                 ps.rank = p.rank
                 ps.save()
-            if p.last_match and p.last_match.is_finished:
-                pg = PlayerGame.get(game=p.last_match, player=p)
-            else:
-                # If new match already started, need to look for previous matches
-                pg = (
-                    PlayerGame.select(PlayerGame, Game)
-                    .join(Game, JOIN.LEFT_OUTER)
-                    .where(Game.is_finished == True, PlayerGame.player_id == p.uuid)
-                    .order_by(PlayerGame.id.desc())
-                    .get_or_none()
+            null_pgs = (
+                PlayerGame.select(PlayerGame, Game)
+                .join(Game)
+                .where(
+                    PlayerGame.player == p,
+                    Game.is_finished == True,
+                    PlayerGame.points_after_match.is_null(),
+                    Game.time >= datetime.now() - timedelta(hours=48),
                 )
-
-            if pg and pg.points_after_match is None:
+                .order_by(Game.time.asc())
+            )
+            for pg in null_pgs:
                 game_season = (
                     Season.select()
                     .where(Season.start_time <= pg.game.time, Season.end_time >= pg.game.time)

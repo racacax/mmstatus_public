@@ -422,3 +422,162 @@ class TestRunIteration:
         p = make_player()
         patch_ranks(monkeypatch, {p.uuid: (1000, 10)})
         UpdatePlayerRanksThread().run_iteration()  # must not raise
+
+
+# ── null_pgs loop: multiple consecutive NULL games ────────────────────────────
+
+
+class TestUpdatePlayerNullPgsMultiple:
+    """
+    Covers the scenario where update_big_queries locks the DB long enough
+    for multiple matches to pile up, then update_matches catches up rapidly
+    and multiple games for the same player all have NULL points_after_match.
+    A single update_player call must fill every eligible NULL game.
+    """
+
+    def test_fills_all_null_games_in_single_update(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        g1 = make_game(m, time=NOW - timedelta(hours=8))
+        g2 = make_game(m, time=NOW - timedelta(hours=5))
+        g3 = make_game(m, time=NOW - timedelta(hours=2))
+        pg1 = make_player_game(p, g1)
+        pg2 = make_player_game(p, g2)
+        pg3 = make_player_game(p, g3)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
+        assert PlayerGame.get_by_id(pg1.id).points_after_match == 1500
+        assert PlayerGame.get_by_id(pg2.id).points_after_match == 1500
+        assert PlayerGame.get_by_id(pg3.id).points_after_match == 1500
+
+    def test_rank_after_match_set_for_all_null_games(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        g1 = make_game(m, time=NOW - timedelta(hours=4))
+        g2 = make_game(m, time=NOW - timedelta(hours=2))
+        pg1 = make_player_game(p, g1)
+        pg2 = make_player_game(p, g2)
+        UpdatePlayerRanksThread().update_player(p, 1500, 42, season)
+        assert PlayerGame.get_by_id(pg1.id).rank_after_match == 42
+        assert PlayerGame.get_by_id(pg2.id).rank_after_match == 42
+
+    def test_does_not_overwrite_already_filled_games(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        g1 = make_game(m, time=NOW - timedelta(hours=6))
+        g2 = make_game(m, time=NOW - timedelta(hours=2))
+        pg1 = make_player_game(p, g1, points_after_match=800)
+        pg2 = make_player_game(p, g2)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
+        assert PlayerGame.get_by_id(pg1.id).points_after_match == 800
+        assert PlayerGame.get_by_id(pg2.id).points_after_match == 1500
+
+    def test_game_older_than_48h_not_filled(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        old_game = make_game(m, time=NOW - timedelta(hours=49))
+        pg = make_player_game(p, old_game)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match is None
+
+    def test_game_within_48h_filled(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        recent_game = make_game(m, time=NOW - timedelta(hours=47))
+        pg = make_player_game(p, recent_game)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match == 1500
+
+    def test_unfinished_game_not_filled(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        g = make_game(m, time=NOW - timedelta(hours=2), is_finished=False)
+        pg = make_player_game(p, g)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match is None
+
+    def test_other_player_null_games_not_touched(self):
+        season = make_season()
+        m = make_map()
+        p1 = make_player(uuid_suffix="0001")
+        p2 = make_player(uuid_suffix="0002")
+        g = make_game(m, time=NOW - timedelta(hours=2))
+        make_player_game(p1, g)
+        pg2 = make_player_game(p2, g)
+        UpdatePlayerRanksThread().update_player(p1, 1500, 200, season)
+        assert PlayerGame.get_by_id(pg2.id).points_after_match is None
+
+    def test_fills_null_games_even_when_points_zero(self):
+        season = make_season()
+        m = make_map()
+        p = make_player()
+        g = make_game(m, time=NOW - timedelta(hours=2))
+        pg = make_player_game(p, g)
+        UpdatePlayerRanksThread().update_player(p, 0, 0, season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match == 0
+
+    def test_multiple_null_games_season_transition_old_game_uses_old_season_points(self):
+        transition = NOW - timedelta(hours=3)
+        old_season = Season.create(name="Old", start_time=NOW - timedelta(days=60), end_time=transition)
+        new_season = Season.create(name="New", start_time=transition, end_time=NOW + timedelta(days=60))
+        m = make_map()
+        p = make_player()
+        old_game = make_game(m, time=NOW - timedelta(hours=5))
+        new_game = make_game(m, time=NOW - timedelta(hours=1))
+        pg_old = make_player_game(p, old_game)
+        pg_new = make_player_game(p, new_game)
+        PlayerSeason.create(player=p, season=old_season, points=700, rank=500)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, new_season)
+        assert PlayerGame.get_by_id(pg_old.id).points_after_match == 700
+        assert PlayerGame.get_by_id(pg_new.id).points_after_match == 1500
+
+    def test_multiple_null_games_season_transition_old_game_rank_uses_old_season(self):
+        transition = NOW - timedelta(hours=3)
+        old_season = Season.create(name="Old", start_time=NOW - timedelta(days=60), end_time=transition)
+        new_season = Season.create(name="New", start_time=transition, end_time=NOW + timedelta(days=60))
+        m = make_map()
+        p = make_player()
+        old_game = make_game(m, time=NOW - timedelta(hours=5))
+        new_game = make_game(m, time=NOW - timedelta(hours=1))
+        make_player_game(p, old_game)
+        make_player_game(p, new_game)
+        PlayerSeason.create(player=p, season=old_season, points=700, rank=500)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, new_season)
+        pg_old = PlayerGame.get(player=p, game=old_game)
+        assert pg_old.rank_after_match == 500
+
+    def test_season_transition_no_old_player_season_falls_back_to_current_points(self):
+        transition = NOW - timedelta(hours=3)
+        Season.create(name="Old", start_time=NOW - timedelta(days=60), end_time=transition)
+        new_season = Season.create(name="New", start_time=transition, end_time=NOW + timedelta(days=60))
+        m = make_map()
+        p = make_player()
+        old_game = make_game(m, time=NOW - timedelta(hours=5))
+        pg = make_player_game(p, old_game)
+        UpdatePlayerRanksThread().update_player(p, 1500, 200, new_season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match == 1500
+
+    def test_absent_player_null_games_not_filled_until_retries_exhausted(self, monkeypatch):
+        season = make_season()
+        m = make_map()
+        p = make_player(uuid_suffix="0001", points=500)
+        g = make_game(m, time=NOW - timedelta(hours=2))
+        pg = make_player_game(p, g)
+        monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
+        UpdatePlayerRanksThread().update_players([p], season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match is None
+
+    def test_absent_player_null_games_filled_after_max_retries(self, monkeypatch):
+        season = make_season()
+        m = make_map()
+        p = make_player(uuid_suffix="0001", points=500, points_fetch_retries=19)
+        g = make_game(m, time=NOW - timedelta(hours=2))
+        pg = make_player_game(p, g)
+        monkeypatch.setattr(NadeoLive, "get_player_ranks", lambda ids: {"results": []})
+        UpdatePlayerRanksThread().update_players([p], season)
+        assert PlayerGame.get_by_id(pg.id).points_after_match == 0

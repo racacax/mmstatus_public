@@ -1174,9 +1174,9 @@ class UpdateBigQueriesThread(AbstractThread):
             queries = self.get_queries(season)
             for q in queries:
                 self.run_query(q, season)
-                logger.info("Waiting 5s before running new query...")
+                logger.info("Waiting 30s before running new query...")
                 time.sleep(
-                    5
+                    30
                 )  # since some of these queries are locking the whole database, we add gaps between queries to allow
                 # other normal threads to work again
 
