@@ -93,3 +93,48 @@ class TestUpdatePlayersClubTagSync:
         fake_api([p], {}, {str(p.uuid): "MY_TAG"})
 
         assert Player.get_by_id(p.uuid).club_tag == "MY_TAG"
+
+
+# ── name fallback when absent from API ───────────────────────────────────────
+
+
+def fake_api_absent_name(players, club_tags_map):
+    """Simulate API returning no name entry for any player."""
+    tags = [{"accountId": str(p.uuid), "clubTag": t} for p, t in club_tags_map.items()]
+    with patch("src.threads.update_players.NadeoOauth.get_player_display_names", return_value={}):
+        with patch("src.threads.update_players.NadeoCore.get_player_club_tags", return_value=tags):
+            UpdatePlayersThread().update_players(players)
+
+
+class TestUpdatePlayersNameFallback:
+
+    def test_keeps_existing_name_when_absent_from_api(self):
+        p = make_player("0010")
+        Player.update(name="ExistingName").where(Player.uuid == p.uuid).execute()
+        p = Player.get_by_id(p.uuid)
+
+        fake_api_absent_name([p], {})
+
+        assert Player.get_by_id(p.uuid).name == "ExistingName"
+
+    def test_sets_name_unknown_when_no_existing_name_and_absent_from_api(self):
+        p = make_player("0011")
+        Player.update(name="").where(Player.uuid == p.uuid).execute()
+        p = Player.get_by_id(p.uuid)
+
+        fake_api_absent_name([p], {})
+
+        assert Player.get_by_id(p.uuid).name == "Name unknown"
+
+    def test_uses_api_name_when_present(self):
+        p = make_player("0012")
+        fake_api([p], {str(p.uuid): "APIName"}, {})
+
+        assert Player.get_by_id(p.uuid).name == "APIName"
+
+    def test_api_name_overrides_existing_name(self):
+        p = make_player("0013")
+        Player.update(name="OldName").where(Player.uuid == p.uuid).execute()
+        fake_api([p], {str(p.uuid): "NewName"}, {})
+
+        assert Player.get_by_id(p.uuid).name == "NewName"

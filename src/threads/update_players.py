@@ -29,7 +29,7 @@ class UpdatePlayersThread(AbstractThread):
             club_tags = {entry["accountId"]: entry["clubTag"] for entry in (club_tags or [])}
             season = Season.get_current_season()
             for p in players:
-                p.name = names.get(str(p.uuid), "Name unknown")
+                p.name = names.get(str(p.uuid)) or p.name or "Name unknown"
                 p.club_tag = club_tags.get(str(p.uuid), None)
                 p.last_name_update = datetime.now()
                 p.save()
