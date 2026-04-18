@@ -49,4 +49,5 @@ db = ReconnectMySQLDatabase(
     password=DATABASE_PASSWORD,
     host=DATABASE_HOST,
     port=DATABASE_PORT,
+    charset="utf8mb4",
 )
