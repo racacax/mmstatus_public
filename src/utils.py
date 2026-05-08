@@ -31,6 +31,7 @@ def get(url, token):
         headers={
             "Authorization": f"nadeo_v1 t={token}",
         },
+        timeout=30,
     ).json()
 
 
@@ -41,6 +42,7 @@ def post(url, data, token):
         headers={
             "Authorization": f"nadeo_v1 t={token}",
         },
+        timeout=30,
     ).json()
 
 

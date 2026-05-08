@@ -2,6 +2,7 @@ import threading
 import time
 
 from src.threads.get_matches import GetMatchesThread
+from src.threads.watchdog import WatchdogThread
 from src.threads.update_big_queries import (
     UpdateBigQueriesThread,
 )
@@ -47,6 +48,7 @@ if ENABLE_THREADS:
         UpdateTopPlayersPositionThread,
         UpdateMainNadeoTokenThread,
         UpdateStatsPerRank,
+        WatchdogThread,
     ]
     if ENABLE_OAUTH:
         thread_classes.append(UpdatePlayersThread)
